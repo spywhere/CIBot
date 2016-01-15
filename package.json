@@ -1,0 +1,15 @@
+{
+  "name": "ios_deploy_bot",
+  "version": "1.0.0",
+  "description": "A Slack bot to trigger the iOS deployment process",
+  "main": "bot.js",
+  "dependencies": {
+    "botkit": "0.0.5"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Sirisak Lueangsaksri",
+  "license": "ISC"
+}
