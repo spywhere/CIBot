@@ -2,7 +2,7 @@
 * @Author: spywhere
 * @Date:   2016-01-14 21:36:44
 * @Last Modified by:   Sirisak Lueangsaksri
-* @Last Modified time: 2016-01-15 14:34:50
+* @Last Modified time: 2016-01-15 16:45:14
 */
 
 var fs = require("fs");
@@ -100,16 +100,17 @@ function getBuildStatus(env){
     return "no";
 }
 
-function runBuild(callback, sequence, currentSequence, processResult){
+function runBuild(sequence, currentSequence, processResult){
     if(!sequence){
         var build = buildQueue[0];
 
         if(build["env"] in configData["build_sequence"]){
             var sequence = configData["build_sequence"][build["env"]];
-            runBuild(callback, sequence, 0);
+            runBuild(sequence, 0);
             return;
         }
     }else{
+        var callback = buildQueue[0]["callback"];
         if(currentSequence < sequence["command"].length){
             if(processResult && processResult["error"]){
                 console.log("And it's internal failed: " + processResult["error"]);
@@ -118,6 +119,9 @@ function runBuild(callback, sequence, currentSequence, processResult){
                     "error_type": "process_failed"
                 });
                 buildQueue.shift();
+                if(buildQueue.length > 0){
+                    runBuild();
+                }
                 return;
             }
             if(currentSequence > 0){
@@ -125,15 +129,15 @@ function runBuild(callback, sequence, currentSequence, processResult){
             }
 
             var command = sequence["command"][currentSequence];
-            var commandCallback = (function(callback, sequence, currentSequence){
+            var commandCallback = (function(sequence, currentSequence){
                 return function(error, stdout, stderr){
-                    runBuild(callback, sequence, currentSequence+1, {
+                    runBuild(sequence, currentSequence+1, {
                         "stdout": stdout,
                         "stderr": stderr,
                         "error": error
                     });
                 }
-            })(callback, sequence, currentSequence);
+            })(sequence, currentSequence);
 
             var working_dir = ".";
             if("working_dir" in configData["config"]){
@@ -171,6 +175,9 @@ function runBuild(callback, sequence, currentSequence, processResult){
                             "success": false,
                             "error_type": "output_not_found"
                         });
+                        if(buildQueue.length > 0){
+                            runBuild();
+                        }
                         return;
                     }
                 }
@@ -182,7 +189,6 @@ function runBuild(callback, sequence, currentSequence, processResult){
                     "success": false,
                     "error_type": "process_failed"
                 });
-                return;
             }else{
                 if("error" in result){
                     console.log("And it's external failed");
@@ -199,6 +205,9 @@ function runBuild(callback, sequence, currentSequence, processResult){
                     });
                 }
             }
+            if(buildQueue.length > 0){
+                runBuild();
+            }
             return;
         }
     }
@@ -212,11 +221,11 @@ function triggerBuild(message, env, type, triggerType){
             "message": buildSentence(
                 configData["error_code"]["env_not_found"]["answer"],
                 {}.extends(
-                    configData["error_code"]["env_not_found"]["dictionary"]
-                ).extends(
                     {
                         "env": env
                     }
+                ).extends(
+                    configData["error_code"]["env_not_found"]["dictionary"]
                 )
             )
         };
@@ -258,107 +267,114 @@ function triggerBuild(message, env, type, triggerType){
             "message": buildSentence(
                 configData["error_code"][buildStatus]["answer"],
                 {}.extends(
-                    configData["error_code"][buildStatus]["dictionary"]
+                    info
+                ).extends(
+                    queueInfo
                 ).extends(
                     {
                         "env": env
                     }
                 ).extends(
-                    queueInfo
-                ).extends(
-                    info
+                    configData["error_code"][buildStatus]["dictionary"]
                 )
             )
         };
     }
 
     if(isTrigger){
+        var building = buildQueue.length > 0;
         buildQueue.push({
-            "env": environment
-        });
-        runBuild((function(environment, type, info){
-            return function(buildResult){
-                var completionMessage = null;
-                if(buildResult["success"]){
-                    completionMessage = buildSentence(
-                        configData["knowledge"][type]["responses"],
-                        {}.extends(
-                            configData["knowledge"][type]["dictionary"]
-                        ).extends(
-                            {
-                                "env": environment
-                            }
-                        ).extends(
-                            queueInfo
-                        ).extends(
-                            info
-                        ).extends(
-                            buildResult["data"]
-                        )
-                    );
-                }else{
-                    if(buildResult["error_type"] == "output_error"){
+            "env": environment,
+            "callback": (function(environment, type, info){
+                return function(buildResult){
+                    var completionMessage = null;
+                    if(buildResult["success"]){
                         completionMessage = buildSentence(
-                            configData["error_code"][buildResult["error_type"]]["answer"],
+                            configData["knowledge"][type]["responses"],
                             {}.extends(
-                                configData["error_code"][buildResult["error_type"]]["dictionary"]
-                            ).extends(
-                                {
-                                    "env": env
-                                }
+                                info
                             ).extends(
                                 queueInfo
                             ).extends(
-                                info
+                                {
+                                    "env": environment
+                                }
+                            ).extends(
+                                configData["knowledge"][type]["dictionary"]
                             ).extends(
                                 buildResult["data"]
                             )
                         );
-                    }else if(
-                        buildResult["error_type"] in configData["error_code"] &&
-                        "answer" in configData["error_code"][buildResult["error_type"]]
-                    ){
-                        completionMessage = buildSentence(
-                            configData["error_code"][buildResult["error_type"]]["answer"],
-                            {}.extends(
-                                configData["error_code"][buildResult["error_type"]]["dictionary"]
-                            ).extends(
-                                {
-                                    "env": env
-                                }
-                            ).extends(
-                                queueInfo
-                            ).extends(
-                                info
-                            )
-                        );
+                    }else{
+                        if(buildResult["error_type"] == "output_error"){
+                            completionMessage = buildSentence(
+                                configData["error_code"][buildResult["error_type"]]["answer"],
+                                {}.extends(
+                                    info
+                                ).extends(
+                                    queueInfo
+                                ).extends(
+                                    {
+                                        "env": env
+                                    }
+                                ).extends(
+                                    configData["error_code"][buildResult["error_type"]]["dictionary"]
+                                ).extends(
+                                    buildResult["data"]
+                                )
+                            );
+                        }else if(
+                            buildResult["error_type"] in configData["error_code"] &&
+                            "answer" in configData["error_code"][buildResult["error_type"]]
+                        ){
+                            completionMessage = buildSentence(
+                                configData["error_code"][buildResult["error_type"]]["answer"],
+                                {}.extends(
+                                    info
+                                ).extends(
+                                    queueInfo
+                                ).extends(
+                                    {
+                                        "env": env
+                                    }
+                                ).extends(
+                                    configData["error_code"][buildResult["error_type"]]["dictionary"]
+                                )
+                            );
+                        }
+                    }
+                    if(completionMessage){
+                        configData["build_info"][environment]["notify_publicly"].forEach(function(message){
+                            bot.reply(message, completionMessage);
+                        });
+                        configData["build_info"][environment]["notify_privately"].forEach(function(message){
+                            bot.reply(message, completionMessage);
+                        });
+                        configData["build_info"][environment]["notify_publicly"] = [];
+                        configData["build_info"][environment]["notify_privately"] = [];
                     }
                 }
-                if(completionMessage){
-                    configData["build_info"][environment]["notify_publicly"].forEach(function(message){
-                        bot.reply(message, completionMessage);
-                    });
-                    configData["build_info"][environment]["notify_privately"].forEach(function(message){
-                        bot.reply(message, completionMessage);
-                    });
-                    configData["build_info"][environment]["notify_publicly"] = [];
-                    configData["build_info"][environment]["notify_privately"] = [];
-                }
+            })(environment, type, info)
+        });
+        if(building){
+            return {
+                "building": true
             }
-        })(environment, type, info));
+        }
+        runBuild();
     }else{
         var completionMessage = buildSentence(
             configData["knowledge"][type]["responses"],
             {}.extends(
-                configData["knowledge"][type]["dictionary"]
+                info
+            ).extends(
+                queueInfo
             ).extends(
                 {
                     "env": environment
                 }
             ).extends(
-                queueInfo
-            ).extends(
-                info
+                configData["knowledge"][type]["dictionary"]
             )
         );
         bot.reply(message, completionMessage);
@@ -422,9 +438,9 @@ for(var buildType in configData["knowledge"]){
                             bot.reply(message, buildSentence(
                                 configData["knowledge"][buildType]["responses"],
                                 {}.extends(
-                                    configData["knowledge"][buildType]["dictionary"]
-                                ).extends(
                                     getBuildQueueInfo()
+                                ).extends(
+                                    configData["knowledge"][buildType]["dictionary"]
                                 )
                             ));
                         }
@@ -441,7 +457,7 @@ for(var buildType in configData["knowledge"]){
                             bot.reply(message, buildSentence(
                                 pattern["queue_answer"],
                                 {}.extends(
-                                    buildKnowledge["dictionary"]
+                                    captures
                                 ).extends(
                                     configData["build_info"][
                                         buildQueue[buildQueue.length - 2]["env"]
@@ -449,20 +465,20 @@ for(var buildType in configData["knowledge"]){
                                 ).extends(
                                     getBuildQueueInfo()
                                 ).extends(
-                                    captures
+                                    buildKnowledge["dictionary"]
                                 )
                             ));
                         }else if("answer" in pattern){
                             bot.reply(message, buildSentence(
                                 pattern["answer"],
                                 {}.extends(
-                                    buildKnowledge["dictionary"]
+                                    captures
                                 ).extends(
                                     getBuildQueueInfo()
                                 ).extends(
                                     configData["build_info"][env]
                                 ).extends(
-                                    captures
+                                    buildKnowledge["dictionary"]
                                 )
                             ));
                         }
