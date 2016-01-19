@@ -2,13 +2,18 @@
 * @Author: spywhere
 * @Date:   2016-01-14 21:36:44
 * @Last Modified by:   Sirisak Lueangsaksri
-* @Last Modified time: 2016-01-19 16:10:37
+* @Last Modified time: 2016-01-19 17:27:24
 */
 
 var fs = require("fs");
 var yaml = require("js-yaml");
 
 var configData = {};
+var eventInterceptors = {
+    "pre_event": [],
+    "on_event": [],
+    "post_event": []
+};
 
 Object.defineProperty(Object.prototype, "extends", {
     enumerable: false,
@@ -42,13 +47,19 @@ function buildSentence(sentences, dictionary){
             generatedDictionary[word] = words;
         }
     }
-    function dictionaryWord(macro, word){
+    function dictionaryWord(macro, word, tmp, tag){
         if(word in generatedDictionary){
-            return generatedDictionary[word];
+            var output = generatedDictionary[word];
+            if(tag && tag.toLowerCase() == "raw"){
+                return output;
+            }else if(tag && tag.toLowerCase() == "upper"){
+                return output.toUpperCase();
+            }
+            return output.toLowerCase();
         }
         return "";
     }
-    return sentence.replace(/<(\w+)>/gi, dictionaryWord);
+    return sentence.replace(/<(\w+)(:(\w+))?>/gi, dictionaryWord);
 }
 
 var Botkit = require("botkit");
@@ -73,9 +84,21 @@ function reloadSequence(){
                 function(extensionPath){
                     console.log("Loading extension " + extensionPath + "...");
                     var extension = require(extensionPath);
-                    configData = configData.extends(
-                        extension.config
-                    );
+
+                    if("preEvent" in extension){
+                        eventInterceptors["pre_event"].push(extension.preEvent);
+                    }
+                    if("onEvent" in extension){
+                        eventInterceptors["on_event"].push(extension.onEvent);
+                    }
+                    if("postEvent" in extension){
+                        eventInterceptors["post_event"].push(extension.postEvent);
+                    }
+                    if("config" in extension){
+                        configData = configData.extends(
+                            extension.config
+                        );
+                    }
                 }
             );
         }
@@ -149,7 +172,15 @@ function responseForError(errorCode){
     );
 }
 
-function interceptMessage(bot, message, broadcastType){
+function triggerSequence(eventData){
+    var message = eventData.message;
+    var sequenceId = eventData.sequenceId;
+
+    console.log(message);
+    bot.reply(message, "Trigger and Response for " + sequenceId);
+}
+
+function interceptMessage(bot, message){
     var knowledges = {};
     if("knowledge" in configData){
         knowledges = configData["knowledge"];
@@ -191,6 +222,36 @@ function interceptMessage(bot, message, broadcastType){
                 captures[captureNames[index]] = match[index];
             }
         }
+
+        var cont = true;
+        eventInterceptors["pre_event"].forEach(function(interceptor){
+            var result = interceptor({
+                bot: bot,
+                message: message,
+                knowledgeType: knowledgeType,
+                captures: captures,
+                // Helper data
+                config: configData,
+                // Helper functions
+                buildSentence: buildSentence,
+                responseForError: responseForError,
+                triggerSequence: triggerSequence
+            });
+            if(typeof(result) != "boolean" || !result){
+                cont = result;
+                return;
+            }
+        });
+        if(typeof(cont) != "boolean" || !cont){
+            if(typeof(cont) == "boolean"){
+                console.log("Skipped by extension.preEvent");
+                continue;
+            }else{
+                console.log("Stopped by extension.preEvent");
+                return;
+            }
+        }
+
         var sequenceId = null;
         if("sequence_map" in knowledge){
             for(var captureName in knowledge["sequence_map"]){
@@ -234,7 +295,10 @@ function interceptMessage(bot, message, broadcastType){
             }
             return;
         }
-        if(!(sequenceId in configData["sequence"])){
+        if(
+            !("sequence" in configData) ||
+            !(sequenceId in configData["sequence"])
+        ){
             var response = responseForError("seq_not_found");
             if(response){
                 bot.reply(message, response);
@@ -259,7 +323,65 @@ function interceptMessage(bot, message, broadcastType){
             continue;
         }
 
-        bot.reply(message, "Trigger and Response for " + sequenceId);
+        // Message .event
+
+        var sequence = configData["sequence"][sequenceId];
+
+        var eventData = {
+            bot: bot,
+            message: message,
+            captures: captures,
+            sequenceId: sequenceId,
+            knowledgeType: knowledgeType,
+            // Helper data
+            config: configData,
+            // Helper functions
+            buildSentence: buildSentence,
+            responseForError: responseForError,
+            triggerSequence: triggerSequence
+        };
+
+        cont = true;
+        eventInterceptors["on_event"].forEach(function(interceptor){
+            var result = interceptor(eventData);
+            if(typeof(result) != "boolean" || !result){
+                cont = result;
+                return;
+            }
+        });
+        if(typeof(cont) != "boolean" || !cont){
+            if(typeof(cont) == "boolean"){
+                console.log("Skipped by extension.onEvent");
+                continue;
+            }else{
+                console.log("Stopped by extension.onEvent");
+                return;
+            }
+        }
+
+        if(typeof(sequence) == "function"){
+            sequence(eventData);
+        }else{
+            triggerSequence(eventData);
+        }
+
+        cont = true;
+        eventInterceptors["post_event"].forEach(function(interceptor){
+            var result = interceptor(eventData);
+            if(typeof(result) != "boolean" || !result){
+                cont = result;
+                return;
+            }
+        });
+        if(typeof(cont) != "boolean" || !cont){
+            if(typeof(cont) == "boolean"){
+                console.log("Continue by extension.postEvent");
+                continue;
+            }else{
+                console.log("Stopped by extension.postEvent");
+                return;
+            }
+        }
 
         return;
     }
@@ -285,16 +407,5 @@ controller.hears(
 controller.hears(
     ["."],
     "direct_message,direct_mention,mention",
-    function(bot, message){
-        interceptMessage(bot, message, "public")
-    }
+    interceptMessage
 );
-
-controller.hears(
-    ["."],
-    "direct_message",
-    function(bot, message){
-        interceptMessage(bot, message, "private")
-    }
-);
-
