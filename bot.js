@@ -2,26 +2,32 @@
 * @Author: spywhere
 * @Date:   2016-01-14 21:36:44
 * @Last Modified by:   Sirisak Lueangsaksri
-* @Last Modified time: 2016-01-15 16:45:14
+* @Last Modified time: 2016-01-19 16:10:37
 */
 
 var fs = require("fs");
+var yaml = require("js-yaml");
 
-var configData = JSON.parse(
-    fs.readFileSync(
-        "config.json", "utf8"
-    ).replace(/\s\/\/.*(?=\n)|\s\/\/.*$/g, "")
-);
+var configData = {};
 
-Object.prototype.extends = function(obj){
-    if(typeof(obj) != "object"){
+Object.defineProperty(Object.prototype, "extends", {
+    enumerable: false,
+    value: function(obj, rootOnly){
+        if(typeof(obj) != "object"){
+            return this;
+        }
+        for(var key in obj){
+            if(key in this && typeof(obj[key]) == "object" && !rootOnly){
+                this[key].extends(obj[key]);
+            }else if(key in this && typeof(obj[key]) == "array" && !rootOnly){
+                this[key].concat(obj[key]);
+            }else{
+                this[key] = obj[key];
+            }
+        }
         return this;
     }
-    for(var key in obj){
-        this[key] = obj[key];
-    }
-    return this;
-}
+});
 
 function buildSentence(sentences, dictionary){
     var sentence = sentences[Math.floor(Math.random() * sentences.length)];
@@ -29,7 +35,9 @@ function buildSentence(sentences, dictionary){
     for(var word in dictionary){
         var words = dictionary[word];
         if(typeof(words) == "object"){
-            generatedDictionary[word] = words[Math.floor(Math.random() * words.length)];
+            generatedDictionary[word] = words[
+                Math.floor(Math.random() * words.length)
+            ];
         }else{
             generatedDictionary[word] = words;
         }
@@ -47,6 +55,60 @@ var Botkit = require("botkit");
 var exec = require("child_process").exec;
 var path = require("path");
 
+function reloadSequence(){
+    try{
+        configData = {};
+        console.log("Loading config.yaml...");
+        configData = yaml.safeLoad(
+            fs.readFileSync("config.yaml", "utf8")
+        , {
+            "json": true
+        });
+        // Load extensions
+        if(
+            "config" in configData &&
+            "extensions" in configData["config"]
+        ){
+            configData["config"]["extensions"].forEach(
+                function(extensionPath){
+                    console.log("Loading extension " + extensionPath + "...");
+                    var extension = require(extensionPath);
+                    configData = configData.extends(
+                        extension.config
+                    );
+                }
+            );
+        }
+        // Load additional configs
+        if(
+            "config" in configData &&
+            "additional_configs" in configData["config"]
+        ){
+            configData["config"]["additional_configs"].forEach(
+                function(configFile){
+                    console.log("Loading " + configFile + "...");
+                    configData = configData.extends(
+                        yaml.safeLoad(
+                            fs.readFileSync(configFile, {
+                                "json": true
+                            })
+                        )
+                    );
+                }
+            );
+        }
+    }catch(err){
+        console.log("Error while loading: " + err);
+    }
+}
+
+reloadSequence();
+
+if(!("config" in configData) || !("bot_token" in configData["config"])){
+    console.log("Configuration file is incomplete");
+    return;
+}
+
 var controller = Botkit.slackbot();
 var bot = controller.spawn({
     token: configData["config"]["bot_token"]
@@ -59,437 +121,157 @@ bot.startRTM(function(err,bot,payload) {
     }
 });
 
-function getBuildQueueInfo(){
-    var info = {
-        "names": "Nothing",
-        "currentQueue": "Nothing"
-    };
-    var names = "";
-    for(var index=0;index<buildQueue.length;index++){
-        var build = buildQueue[index];
-        var buildInfo = configData["build_info"][build["env"]];
-        if(index == 0){
-            info["currentQueue"] = buildInfo["name"];
-        }
-        if(names){
-            if(index == buildQueue.length - 1){
-                names += " and ";
-            }else{
-                names += ", ";
-            }
-        }
-        names += buildInfo["name"];
-    }
-    info["totalQueue"] = "" + buildQueue.length;
-    if(names){
-        info["names"] = names;
-    }
+function shutdownSequence(){
+    process.exit();
+}
+
+function getResponseInfo(){
+    var info = {};
+    // TODO: Add public info
     return info;
 }
 
-function getBuildStatus(env){
-    if(buildQueue.length <= 0){
-        return "no";
+function responseForError(errorCode){
+    if(
+        !("error_code" in configData) ||
+        !(errorCode in configData["error_code"]) ||
+        !("answers" in configData["error_code"][errorCode])
+    ){
+        console.log("No response for error code: " + errorCode);
+        return null;
     }
-    for(var index=0;index<buildQueue.length;index++){
-        var build = buildQueue[index];
-        if(build["env"] == env){
-            return (index == 0) ? "env_building" : "env_queue";
-        }
-    }
-    return "no";
+    var errorResponse = configData["error_code"][errorCode];
+    return buildSentence(
+        errorResponse["answers"],
+        getResponseInfo().extends(
+            ("dictionary" in errorResponse) ? errorResponse["dictionary"] : {}
+        )
+    );
 }
 
-function runBuild(sequence, currentSequence, processResult){
-    if(!sequence){
-        var build = buildQueue[0];
-
-        if(build["env"] in configData["build_sequence"]){
-            var sequence = configData["build_sequence"][build["env"]];
-            runBuild(sequence, 0);
-            return;
-        }
-    }else{
-        var callback = buildQueue[0]["callback"];
-        if(currentSequence < sequence["command"].length){
-            if(processResult && processResult["error"]){
-                console.log("And it's internal failed: " + processResult["error"]);
-                callback({
-                    "success": false,
-                    "error_type": "process_failed"
-                });
-                buildQueue.shift();
-                if(buildQueue.length > 0){
-                    runBuild();
-                }
-                return;
-            }
-            if(currentSequence > 0){
-                console.log("And it's succeed");
-            }
-
-            var command = sequence["command"][currentSequence];
-            var commandCallback = (function(sequence, currentSequence){
-                return function(error, stdout, stderr){
-                    runBuild(sequence, currentSequence+1, {
-                        "stdout": stdout,
-                        "stderr": stderr,
-                        "error": error
-                    });
-                }
-            })(sequence, currentSequence);
-
-            var working_dir = ".";
-            if("working_dir" in configData["config"]){
-                working_dir = configData["config"]["working_dir"];
-            }
-
-            console.log("Runing: " + command);
-            exec(command, {
-                "cwd": working_dir
-            }, commandCallback);
-            return;
-        }else{
-            buildQueue.shift();
-
-            var result = {};
-            var working_dir = ".";
-            if("working_dir" in configData["config"]){
-                working_dir = configData["config"]["working_dir"];
-            }
-            if("output" in sequence){
-                if(typeof(sequence["output"]) == "boolean" && sequence["output"]){
-                    result = JSON.parse(processResult["stdout"]);
-                }else if(typeof(sequence["output"]) == "string"){
-                    var output_file = path.join(working_dir, sequence["output"]);
-                    try{
-                        fs.accessSync(output_file);
-                        result = JSON.parse(
-                            fs.readFileSync(
-                                output_file, "utf8"
-                            ).replace(/\s\/\/.*(?=\n)|\s\/\/.*$/g, "")
-                        );
-                    }catch(error){
-                        console.log("And it's external failed");
-                        callback({
-                            "success": false,
-                            "error_type": "output_not_found"
-                        });
-                        if(buildQueue.length > 0){
-                            runBuild();
-                        }
-                        return;
-                    }
-                }
-            }
-
-            if(processResult["error"]){
-                console.log("And it's internal failed: " + processResult["error"]);
-                callback({
-                    "success": false,
-                    "error_type": "process_failed"
-                });
-            }else{
-                if("error" in result){
-                    console.log("And it's external failed");
-                    callback({
-                        "success": false,
-                        "error_type": "output_error",
-                        "data": result
-                    });
-                }else{
-                    console.log("And it's succeed");
-                    callback({
-                        "success": true,
-                        "data": result
-                    });
-                }
-            }
-            if(buildQueue.length > 0){
-                runBuild();
-            }
-            return;
-        }
+function interceptMessage(bot, message, broadcastType){
+    var knowledges = {};
+    if("knowledge" in configData){
+        knowledges = configData["knowledge"];
     }
-}
-
-function triggerBuild(message, env, type, triggerType){
-    var environment = env.toLowerCase();
-    if(!(environment in configData["build_info"])){
-        return {
-            "building": false,
-            "message": buildSentence(
-                configData["error_code"]["env_not_found"]["answer"],
-                {}.extends(
-                    {
-                        "env": env
-                    }
-                ).extends(
-                    configData["error_code"]["env_not_found"]["dictionary"]
-                )
-            )
-        };
-    }
-
-    var isTrigger = (triggerType == "public" || triggerType == "private");
-
-    if(triggerType == "public"){
-        var skip = false;
-        var channels = configData["build_info"][environment]["notify_publicly"];
-        for(var index=0;index<channels.length;index++){
-            if(message.channel == channels[index].channel){
-                skip = true;
+    for(var knowledgeType in knowledges){
+        var knowledge = knowledges[knowledgeType];
+        var pattern = {};
+        if("pattern" in knowledge){
+            pattern = knowledge["pattern"];
+        }
+        // Questions not in the pattern
+        if(!("questions" in pattern)){
+            continue;
+        }
+        var questions = pattern["questions"];
+        var match = null;
+        var captureNames = [];
+        for(var index=0;index<questions.length;index++){
+            captureNames = [];
+            var question = questions[index];
+            match = message.text.match(new RegExp(question, "i"));
+            if(match){
+                if(
+                    "captures" in pattern &&
+                    index < pattern["captures"].length
+                ){
+                    captureNames = pattern["captures"][index];
+                }
                 break;
             }
         }
-        if(!skip){
-            channels.push(message);
+        // No question matched
+        if(!match){
+            continue;
         }
-    }else if(triggerType == "private"){
-        var skip = false;
-        var channels = configData["build_info"][environment]["notify_privately"];
-        for(var index=0;index<channels.length;index++){
-            if(message.user == channels[index].user){
-                skip = true;
-                break;
+        var captures = {};
+        for(var index=0;index<captureNames.length;index++){
+            if(captureNames[index]){
+                captures[captureNames[index]] = match[index];
             }
         }
-        if(!skip){
-            channels.push(message);
-        }
-    }
-    var buildStatus = getBuildStatus(environment)
-    var info = configData["build_info"][environment];
-    var queueInfo = getBuildQueueInfo();
-    if(buildStatus != "no" && isTrigger){
-        return {
-            "building": false,
-            "message": buildSentence(
-                configData["error_code"][buildStatus]["answer"],
-                {}.extends(
-                    info
-                ).extends(
-                    queueInfo
-                ).extends(
-                    {
-                        "env": env
-                    }
-                ).extends(
-                    configData["error_code"][buildStatus]["dictionary"]
-                )
-            )
-        };
-    }
-
-    if(isTrigger){
-        var building = buildQueue.length > 0;
-        buildQueue.push({
-            "env": environment,
-            "callback": (function(environment, type, info){
-                return function(buildResult){
-                    var completionMessage = null;
-                    if(buildResult["success"]){
-                        completionMessage = buildSentence(
-                            configData["knowledge"][type]["responses"],
-                            {}.extends(
-                                info
-                            ).extends(
-                                queueInfo
-                            ).extends(
-                                {
-                                    "env": environment
-                                }
-                            ).extends(
-                                configData["knowledge"][type]["dictionary"]
-                            ).extends(
-                                buildResult["data"]
-                            )
-                        );
-                    }else{
-                        if(buildResult["error_type"] == "output_error"){
-                            completionMessage = buildSentence(
-                                configData["error_code"][buildResult["error_type"]]["answer"],
-                                {}.extends(
-                                    info
-                                ).extends(
-                                    queueInfo
-                                ).extends(
-                                    {
-                                        "env": env
-                                    }
-                                ).extends(
-                                    configData["error_code"][buildResult["error_type"]]["dictionary"]
-                                ).extends(
-                                    buildResult["data"]
-                                )
-                            );
-                        }else if(
-                            buildResult["error_type"] in configData["error_code"] &&
-                            "answer" in configData["error_code"][buildResult["error_type"]]
-                        ){
-                            completionMessage = buildSentence(
-                                configData["error_code"][buildResult["error_type"]]["answer"],
-                                {}.extends(
-                                    info
-                                ).extends(
-                                    queueInfo
-                                ).extends(
-                                    {
-                                        "env": env
-                                    }
-                                ).extends(
-                                    configData["error_code"][buildResult["error_type"]]["dictionary"]
-                                )
-                            );
-                        }
-                    }
-                    if(completionMessage){
-                        configData["build_info"][environment]["notify_publicly"].forEach(function(message){
-                            bot.reply(message, completionMessage);
-                        });
-                        configData["build_info"][environment]["notify_privately"].forEach(function(message){
-                            bot.reply(message, completionMessage);
-                        });
-                        configData["build_info"][environment]["notify_publicly"] = [];
-                        configData["build_info"][environment]["notify_privately"] = [];
-                    }
-                }
-            })(environment, type, info)
-        });
-        if(building){
-            return {
-                "building": true
-            }
-        }
-        runBuild();
-    }else{
-        var completionMessage = buildSentence(
-            configData["knowledge"][type]["responses"],
-            {}.extends(
-                info
-            ).extends(
-                queueInfo
-            ).extends(
-                {
-                    "env": environment
-                }
-            ).extends(
-                configData["knowledge"][type]["dictionary"]
-            )
-        );
-        bot.reply(message, completionMessage);
-    }
-
-    return {
-        "building": true
-    };
-}
-
-for(var buildType in configData["knowledge"]){
-    var buildKnowledge = configData["knowledge"][buildType];
-    if(!("patterns" in buildKnowledge && "responses" in buildKnowledge)){
-        continue;
-    }
-    buildKnowledge["patterns"].forEach(function(pattern){
-        if(!("question" in pattern)){
-            return;
-        }
-
-        var scope = "direct_message,direct_mention,mention";
-        var triggerType = "public";
-        if("trigger_type" in buildKnowledge){
-            triggerType = buildKnowledge["trigger_type"];
-        }
-
-        if(triggerType == "public"){
-            scope = "direct_mention,mention";
-        }else if(triggerType == "private"){
-            scope = "direct_message";
-        }
-
-        controller.hears(
-            pattern["question"],
-            scope,
-            (function(buildKnowledge, pattern, buildType, triggerType){
-                return function(bot, message){
-                    var match = null;
-                    var capture = [];
-                    for(var index=0;index<pattern["question"].length;index++){
-                        var question = pattern["question"][index];
-                        match = message.text.match(new RegExp(question, "i"));
-                        if(match){
-                            if(
-                                "capture" in pattern &&
-                                index < pattern["capture"].length
-                            ){
-                                capture = pattern["capture"][index];
-                            }
-                            break;
-                        }
-                    }
-                    var captures = {};
-                    for(var index=0;index<capture.length;index++){
-                        if(capture[index]){
-                            captures[capture[index]] = match[index];
-                        }
-                    }
-                    if(!("env" in captures)){
-                        if("responses" in configData["knowledge"][buildType]){
-                            bot.reply(message, buildSentence(
-                                configData["knowledge"][buildType]["responses"],
-                                {}.extends(
-                                    getBuildQueueInfo()
-                                ).extends(
-                                    configData["knowledge"][buildType]["dictionary"]
-                                )
-                            ));
-                        }
-                        return;
-                    }
-
-                    var env = captures["env"];
-                    var buildResponse = triggerBuild(message, env, buildType, triggerType);
-                    if(buildResponse["building"]){
+        var sequenceId = null;
+        if("sequence_map" in knowledge){
+            for(var captureName in knowledge["sequence_map"]){
+                if(captureName in captures){
+                    var mappings = knowledge["sequence_map"][captureName];
+                    mappings.forEach(function(mapping){
                         if(
-                            "queue_answer" in pattern &&
-                            getBuildStatus(env) == "env_queue"
+                            "value" in mapping && "map" in mapping &&
+                            mapping["value"] == captures[captureName]
                         ){
-                            bot.reply(message, buildSentence(
-                                pattern["queue_answer"],
-                                {}.extends(
-                                    captures
-                                ).extends(
-                                    configData["build_info"][
-                                        buildQueue[buildQueue.length - 2]["env"]
-                                    ]
-                                ).extends(
-                                    getBuildQueueInfo()
-                                ).extends(
-                                    buildKnowledge["dictionary"]
-                                )
-                            ));
-                        }else if("answer" in pattern){
-                            bot.reply(message, buildSentence(
-                                pattern["answer"],
-                                {}.extends(
-                                    captures
-                                ).extends(
-                                    getBuildQueueInfo()
-                                ).extends(
-                                    configData["build_info"][env]
-                                ).extends(
-                                    buildKnowledge["dictionary"]
-                                )
-                            ));
+                            sequenceId = mapping["map"];
+                            return;
                         }
-                    }else{
-                        bot.reply(message, buildResponse["message"]);
+                    });
+                    if(sequenceId){
+                        break;
                     }
                 }
-            })(buildKnowledge, pattern, buildType, triggerType)
-        );
-    });
+            }
+        }
+        if(!sequenceId && "associate_sequence" in captures){
+            sequenceId = captures["associate_sequence"];
+        }
+        if(!sequenceId && "associate_sequence" in knowledge){
+            sequenceId = knowledge["associate_sequence"];
+        }
+
+        // Pattern that does not involve sequence (such as FAQs)
+        if(!sequenceId){
+            if("response" in knowledge && "answers" in knowledge["response"]){
+                bot.reply(
+                    knowledge["response"]["answers"],
+                    getResponseInfo().extends(
+                        (
+                            "dictionary" in knowledge
+                        ) ? knowledge["dictionary"] : {}
+                    )
+                );
+            }else{
+                console.log("No response for: " + message.text);
+            }
+            return;
+        }
+        if(!(sequenceId in configData["sequence"])){
+            var response = responseForError("seq_not_found");
+            if(response){
+                bot.reply(message, response);
+            }
+            return;
+        }
+        var supported = false;
+        if("supported_sequences" in knowledge){
+            var supportedSequences = knowledge["supported_sequences"];
+            supportedSequences.forEach(function(seq){
+                if(seq == sequenceId){
+                    supported = true;
+                    return;
+                }
+            });
+        }else{
+            supported = true;
+        }
+        // Sequence not supported
+        if(!supported){
+            console.log("Sequence not supported: " + sequenceId);
+            continue;
+        }
+
+        bot.reply(message, "Trigger and Response for " + sequenceId);
+
+        return;
+    }
 }
+
+controller.hears(
+    ["reload"],
+    "direct_message,direct_mention,mention",
+    function(bot, message){
+        reloadSequence();
+    }
+);
 
 controller.hears(
     ["shutdown"],
@@ -499,3 +281,20 @@ controller.hears(
         process.exit();
     }
 );
+
+controller.hears(
+    ["."],
+    "direct_message,direct_mention,mention",
+    function(bot, message){
+        interceptMessage(bot, message, "public")
+    }
+);
+
+controller.hears(
+    ["."],
+    "direct_message",
+    function(bot, message){
+        interceptMessage(bot, message, "private")
+    }
+);
+
