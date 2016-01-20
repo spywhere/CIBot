@@ -17,7 +17,13 @@ knowledge: <Knowledge>
 
 ### Sequence
 ```yaml
-
+commands:
+output:
+parallel: false
+  allows: ["pattern", "*"]
+  disallows: ["pattern", "*"]
+notify_parallel: true
+notify_running: true
 ```
 
 ### Sequence Info
@@ -32,6 +38,9 @@ seq\_not_found:
   - Error response
   - Error response
   dictionary:
+seq_queue_wait:
+seq_parallel_wait:
+seq_running:
 ```
 
 ### Knowledge

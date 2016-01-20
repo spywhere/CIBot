@@ -5,7 +5,8 @@
   "main": "bot.js",
   "dependencies": {
     "botkit": "^0.0.5",
-    "js-yaml": "^3.5.2"
+    "js-yaml": "^3.5.2",
+    "moment": "^2.11.1"
   },
   "devDependencies": {},
   "scripts": {
