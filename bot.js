@@ -2,7 +2,7 @@
 * @Author: spywhere
 * @Date:   2016-01-14 21:36:44
 * @Last Modified by:   Sirisak Lueangsaksri
-* @Last Modified time: 2016-01-20 18:18:16
+* @Last Modified time: 2016-01-21 13:41:13
 */
 
 var fs = require("fs");
@@ -19,6 +19,8 @@ var eventInterceptors = {
     "post_event": [],
     "on_failed": []
 };
+
+var workingDirSuffix = "";
 
 Object.defineProperty(Object.prototype, "extends", {
     enumerable: false,
@@ -156,7 +158,6 @@ var controller = Botkit.slackbot();
 var bot = controller.spawn({
     token: configData.config.bot_token
 })
-var buildQueue = [];
 
 bot.startRTM(function(err,bot,payload) {
     if (err) {
@@ -236,11 +237,59 @@ function sequenceCanParallel(sequence, lastSequence){
     return true;
 }
 
-function runSequence(eventData){
+function runSequence(sequenceInfo, eventData, currentCommand, processResult){
     var sequenceId = eventData.sequenceId;
     var sequence = configData.sequence[sequenceId];
 
+    if(!currentCommand){
+        workingDirSuffix = "";
+        currentCommand = 0;
+    }
 
+    if(!("commands" in sequence)){
+        var response = responseForError("cmd_not_found");
+
+        eventInterceptors.on_failed.forEach(function(interceptor){
+            var result = interceptor({
+                bot: bot,
+                message: message,
+                knowledgeType: knowledgeType,
+                captures: captures,
+                error: "seq_not_found",
+                // Helper data
+                config: configData,
+                // Helper functions
+                buildSentence: buildSentence,
+                responseForError: responseForError,
+                triggerSequence: triggerSequence,
+                logMessage: logMessage
+            });
+        });
+
+        if(response){
+            bot.reply(message, response);
+        }
+        return;
+    }
+
+    var command = sequence.commands[currentCommand];
+    var commandCallback = (function(sequenceInfo, eventData, currentCommand){
+        return function(error, stdout, stderr){
+            runBuild(sequenceInfo, eventData, currentCommand+1, {
+                "stdout": stdout,
+                "stderr": stderr,
+                "error": error
+            });
+        };
+    })(sequenceInfo, eventData, currentCommand);
+
+    var workingDir = ".";
+
+    if("working_dir" in sequence){
+        workingDir = sequence.working_dir;
+    }else if("working_dir" in configData.config){
+        workingDir = configData.config.working_dir;
+    }
 }
 
 function triggerSequence(eventData){
@@ -256,7 +305,7 @@ function triggerSequence(eventData){
         ){
             errorCode = "seq_parallel_wait";
         }
-        var lastSequence = sequenceQueue[sequenceQueue.length - 1];
+        var lastSequence = sequenceQueue[sequenceQueue.length - 1].sequenceId;
         var canParallel = sequenceCanParallel(sequence, lastSequence);
         if(canParallel == null){
             canParallel = false;
@@ -287,8 +336,11 @@ function triggerSequence(eventData){
         }
     }
 
-    sequenceQueue.push(sequenceId);
-    runSequence(eventData);
+    var sequenceInfo = {
+        sequenceId: sequenceId
+    };
+    sequenceQueue.push(sequenceInfo);
+    runSequence(sequenceInfo, eventData);
 }
 
 function interceptMessage(bot, message){

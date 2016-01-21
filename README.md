@@ -33,14 +33,31 @@ notify_running: true
 
 ### Error Types
 ```yaml
-seq\_not_found:
+seq_not_found:
   answers:
   - Error response
   - Error response
   dictionary:
 seq_queue_wait:
+  answers:
+  - Error response
+  - Error response
+  dictionary:
 seq_parallel_wait:
+  answers:
+  - Error response
+  - Error response
+  dictionary:
 seq_running:
+  answers:
+  - Error response
+  - Error response
+  dictionary:
+cmd_not_found:
+  answers:
+  - Error response
+  - Error response
+  dictionary:
 ```
 
 ### Knowledge
