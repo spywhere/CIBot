@@ -2,7 +2,7 @@
 * @Author: spywhere
 * @Date:   2016-01-14 21:36:44
 * @Last Modified by:   Sirisak Lueangsaksri
-* @Last Modified time: 2016-01-22 13:54:54
+* @Last Modified time: 2016-01-22 15:47:08
 */
 
 var fs = require("fs");
@@ -13,14 +13,28 @@ var dataChanged = false;
 var storageData = {};
 var configData = {};
 var sequenceQueue = [];
-var eventInterceptors = {
+var extensions = {
     pre_event: [],
     on_event: [],
     post_event: [],
-    on_failed: []
+    on_failed: [],
+    response_info: []
 };
 
 var workingDirSuffix = "";
+
+var presetCommands = [
+    {
+        "pattern": /^\s*cd\s*(.+)/mi,
+        "operation": changeWorkingDirectory
+    }, {
+        "pattern": /reload/i,
+        "operation": reloadSequence
+    }, {
+        "pattern": /shutdown/i,
+        "operation": reloadSequence
+    }
+]
 
 Object.defineProperty(Object.prototype, "extends", {
     enumerable: false,
@@ -85,7 +99,14 @@ var Botkit = require("botkit");
 var exec = require("child_process").exec;
 var path = require("path");
 
-function reloadSequence(){
+function changeWorkingDirectory(matches){
+    if(matches.length > 1){
+        workingDirSuffix = path.resolve(workingDirSuffix, matches[1]);
+    }
+    return {};
+}
+
+function reloadSequence(matches){
     try{
         configData = {};
         logMessage("Loading config.yaml...");
@@ -105,20 +126,30 @@ function reloadSequence(){
                     var extension = require(extensionPath);
 
                     if("preEvent" in extension){
-                        eventInterceptors.pre_event.push(extension.preEvent);
+                        extensions.pre_event.push(extension.preEvent);
                     }
                     if("onEvent" in extension){
-                        eventInterceptors.on_event.push(extension.onEvent);
+                        extensions.on_event.push(extension.onEvent);
                     }
                     if("postEvent" in extension){
-                        eventInterceptors.post_event.push(extension.postEvent);
+                        extensions.post_event.push(extension.postEvent);
                     }
                     if("onFailed" in extension){
-                        eventInterceptors.on_failed.push(extension.onFailed);
+                        extensions.on_failed.push(extension.onFailed);
+                    }
+                    if("getResponseInfo" in extension){
+                        extensions.response_info.push(
+                            extension.getResponseInfo
+                        );
                     }
                     if("config" in extension){
                         configData = configData.extends(
                             extension.config
+                        );
+                    }
+                    if("commands" in extension){
+                        presetCommands = presetCommands.extends(
+                            extension.commands
                         );
                     }
                 }
@@ -144,7 +175,13 @@ function reloadSequence(){
         }
     }catch(err){
         logMessage("Error while loading: " + err);
+        return {
+            stdout: "",
+            stderr: "",
+            error: "Error while loading: " + err
+        };
     }
+    return {};
 }
 
 reloadSequence();
@@ -165,13 +202,20 @@ bot.startRTM(function(err,bot,payload) {
     }
 });
 
-function shutdownSequence(){
+function shutdownSequence(matches){
     process.exit();
+    return {};
 }
 
-function getResponseInfo(){
+function getResponseInfo(eventData){
     var info = {};
-    // TODO: Add public info
+    // TODO: Add current sequence info
+    // TODO: Add parallel sequence (A) info ([A <- Current])
+    // TODO: Add queue info
+    // TODO: Add captures
+    extensions.response_info.forEach(function(responseInfo){
+        info.extends(responseInfo(eventData));
+    });
     return info;
 }
 
@@ -183,7 +227,7 @@ function hasResponseForError(errorCode){
     );
 }
 
-function responseForError(errorCode, infos){
+function responseForError(errorCode, errorData){
     if(!hasResponseForError(errorCode)){
         logMessage("No response for error code: " + errorCode);
         return null;
@@ -191,9 +235,7 @@ function responseForError(errorCode, infos){
     var errorResponse = configData.error_code[errorCode];
     return buildSentence(
         errorResponse.answers,
-        getResponseInfo().extends(
-            infos
-        ).extends(
+        getResponseInfo(errorData).extends(
             ("dictionary" in errorResponse) ? errorResponse.dictionary : {}
         )
     );
@@ -243,21 +285,23 @@ function handleProcess(sequenceInfo, buildResult){
     var eventData = sequenceInfo.eventData;
     var knowledge = configData.knowledge[eventData.knowledgeType];
 
-    // TODO: Includes more data
     var completionMessage = null;
     if(buildResult["success"]){
         completionMessage = buildSentence(
             knowledge["responses"],
-            getResponseInfo().extends(
+            getResponseInfo(eventData).extends(
                 knowledge["dictionary"]
             ).extends(
                 buildResult["data"]
             )
         );
     }else{
-        var completionMessage = responseForError(buildResult["error_type"]);
+        var completionMessage = responseForError(
+            buildResult["error_type"],
+            eventData
+        );
         eventData.error = buildResult["error_type"];
-        eventInterceptors.on_failed.forEach(function(interceptor){
+        extensions.on_failed.forEach(function(interceptor){
             var result = interceptor(eventData);
             if(typeof(result) != "boolean" || !result){
                 cont = result;
@@ -322,10 +366,10 @@ function runSequence(sequenceInfo, currentCommand, processResult){
     }
 
     if(!("commands" in sequence)){
-        var response = responseForError("cmd_not_found");
+        var response = responseForError("cmd_not_found", eventData);
 
         eventData.error = "cmd_not_found";
-        eventInterceptors.on_failed.forEach(function(interceptor){
+        extensions.on_failed.forEach(function(interceptor){
             var result = interceptor(eventData);
             if(typeof(result) != "boolean" || !result){
                 cont = result;
@@ -383,7 +427,8 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                     );
                 }catch(error){
                     logMessage(
-                        "[" + sequenceId + "] And it's external failed"
+                        "[" + sequenceId +
+                        "] And it's external failed (output_not_found)"
                     );
                     handleProcess(sequenceInfo, {
                         success: false,
@@ -406,7 +451,10 @@ function runSequence(sequenceInfo, currentCommand, processResult){
             });
         }else{
             if("error" in result){
-                logMessage("[" + sequenceId + "] And it's external failed");
+                logMessage(
+                    "[" + sequenceId +
+                    "] And it's external failed (output_error)"
+                );
                 handleProcess(sequenceInfo, {
                     success: false,
                     error_type: "output_error",
@@ -443,15 +491,26 @@ function runSequence(sequenceInfo, currentCommand, processResult){
         "[" + sequenceId + "] Working Directory: " + path.normalize(workingDir)
     );
 
-    var cdInfo = command.match(/^\s*cd\s*(.+)/mi);
-    if(cdInfo && cdInfo.length > 1){
-        workingDirSuffix = path.resolve(workingDirSuffix, cdInfo[1]);
-    }
     logMessage("[" + sequenceId + "] Running: " + command);
-
-    exec(command, {
-        cwd: path.normalize(workingDir)
-    }, commandCallback);
+    var commandResult = null;
+    presetCommands.forEach(function(commandInfo){
+        var match = command.match(commandInfo.pattern);
+        if(match){
+            commandResult = commandInfo.operation(match);
+            return;
+        }
+    });
+    if(commandResult){
+        commandCallback(
+            ("error" in commandResult) ? commandResult.error : null,
+            ("stdout" in commandResult) ? commandResult.stdout : null,
+            ("stderr" in commandResult) ? commandResult.stderr : null
+        );
+    }else{
+        sequenceInfo.process = exec(command, {
+            cwd: path.normalize(workingDir)
+        }, commandCallback);
+    }
     return;
 }
 
@@ -498,10 +557,9 @@ function triggerSequence(eventData){
                 }
             });
 
-            // TODO: Include previous and current sequence in error message
-            var response = responseForError(errorCode);
+            var response = responseForError(errorCode, eventData);
 
-            eventInterceptors.on_failed.forEach(function(interceptor){
+            extensions.on_failed.forEach(function(interceptor){
                 var result = interceptor(eventData);
                 if(typeof(result) != "boolean" || !result){
                     return;
@@ -568,7 +626,7 @@ function interceptMessage(bot, message){
         }
 
         var cont = true;
-        eventInterceptors.pre_event.forEach(function(interceptor){
+        extensions.pre_event.forEach(function(interceptor){
             var result = interceptor({
                 bot: bot,
                 message: message,
@@ -580,6 +638,7 @@ function interceptMessage(bot, message){
                 buildSentence: buildSentence,
                 responseForError: responseForError,
                 triggerSequence: triggerSequence,
+                getResponseInfo: getResponseInfo,
                 logMessage: logMessage
             });
             if(typeof(result) != "boolean" || !result){
@@ -630,7 +689,10 @@ function interceptMessage(bot, message){
                 bot.reply(
                     message, buildSentence(
                         knowledge.responses,
-                        getResponseInfo().extends(
+                        getResponseInfo({
+                            knowledgeType: knowledgeType,
+                            captures: captures,
+                        }).extends(
                             (
                                 "dictionary" in knowledge
                             ) ? knowledge.dictionary : {}
@@ -646,25 +708,27 @@ function interceptMessage(bot, message){
             !("sequence" in configData) ||
             !(sequenceId in configData.sequence)
         ){
-            // TODO: Include sequence info
-            var response = responseForError("seq_not_found");
+            var errorData = {
+                bot: bot,
+                message: message,
+                sequenceId: sequenceId,
+                knowledgeType: knowledgeType,
+                captures: captures,
+                error: "seq_not_found",
+                // Helper data
+                config: configData,
+                // Helper functions
+                buildSentence: buildSentence,
+                responseForError: responseForError,
+                triggerSequence: triggerSequence,
+                getResponseInfo: getResponseInfo,
+                logMessage: logMessage
+            };
+            var response = responseForError("seq_not_found", errorData);
 
             cont = true;
-            eventInterceptors.on_failed.forEach(function(interceptor){
-                var result = interceptor({
-                    bot: bot,
-                    message: message,
-                    knowledgeType: knowledgeType,
-                    captures: captures,
-                    error: "seq_not_found",
-                    // Helper data
-                    config: configData,
-                    // Helper functions
-                    buildSentence: buildSentence,
-                    responseForError: responseForError,
-                    triggerSequence: triggerSequence,
-                    logMessage: logMessage
-                });
+            extensions.on_failed.forEach(function(interceptor){
+                var result = interceptor(errorData);
                 if(typeof(result) != "boolean" || !result){
                     cont = result;
                     return;
@@ -719,11 +783,12 @@ function interceptMessage(bot, message){
             buildSentence: buildSentence,
             responseForError: responseForError,
             triggerSequence: triggerSequence,
+            getResponseInfo: getResponseInfo,
             logMessage: logMessage
         };
 
         cont = true;
-        eventInterceptors.on_event.forEach(function(interceptor){
+        extensions.on_event.forEach(function(interceptor){
             var result = interceptor(eventData);
             if(typeof(result) != "boolean" || !result){
                 cont = result;
@@ -740,6 +805,15 @@ function interceptMessage(bot, message){
             }
         }
 
+        if("answers" in pattern){
+            bot.reply(message, buildSentence(
+                pattern["answers"],
+                getResponseInfo(eventData).extends(
+                    ("dictionary" in knowledge) ? knowledge["dictionary"] : {}
+                )
+            ));
+        }
+
         if(typeof(sequence) == "function"){
             sequence(eventData);
         }else{
@@ -747,7 +821,7 @@ function interceptMessage(bot, message){
         }
 
         cont = true;
-        eventInterceptors.post_event.forEach(function(interceptor){
+        extensions.post_event.forEach(function(interceptor){
             var result = interceptor(eventData);
             if(typeof(result) != "boolean" || !result){
                 cont = result;
@@ -762,16 +836,6 @@ function interceptMessage(bot, message){
                 logMessage("Stopped by extension.postEvent");
                 return;
             }
-        }
-
-        // TODO: Add more data
-        if("answers" in pattern){
-            bot.reply(message, buildSentence(
-                pattern["answers"],
-                getResponseInfo().extends(
-                    ("dictionary" in knowledge) ? knowledge["dictionary"] : {}
-                )
-            ));
         }
 
         return;
