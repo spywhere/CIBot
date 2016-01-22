@@ -2,7 +2,7 @@
 * @Author: spywhere
 * @Date:   2016-01-14 21:36:44
 * @Last Modified by:   Sirisak Lueangsaksri
-* @Last Modified time: 2016-01-22 12:03:08
+* @Last Modified time: 2016-01-22 13:54:54
 */
 
 var fs = require("fs");
@@ -239,6 +239,38 @@ function sequenceCanParallel(sequence, lastSequence){
 
 function handleProcess(sequenceInfo, buildResult){
     logMessage("[" + sequenceInfo.sequenceId + "] Response based on result");
+
+    var eventData = sequenceInfo.eventData;
+    var knowledge = configData.knowledge[eventData.knowledgeType];
+
+    // TODO: Includes more data
+    var completionMessage = null;
+    if(buildResult["success"]){
+        completionMessage = buildSentence(
+            knowledge["responses"],
+            getResponseInfo().extends(
+                knowledge["dictionary"]
+            ).extends(
+                buildResult["data"]
+            )
+        );
+    }else{
+        var completionMessage = responseForError(buildResult["error_type"]);
+        eventData.error = buildResult["error_type"];
+        eventInterceptors.on_failed.forEach(function(interceptor){
+            var result = interceptor(eventData);
+            if(typeof(result) != "boolean" || !result){
+                cont = result;
+                return;
+            }
+        });
+    }
+    if(completionMessage){
+        sequenceInfo.notify.forEach(function(message){
+            bot.reply(message, completionMessage);
+        });
+        sequenceInfo.notify = [];
+    }
 }
 
 function runSequence(sequenceInfo, currentCommand, processResult){
@@ -292,21 +324,13 @@ function runSequence(sequenceInfo, currentCommand, processResult){
     if(!("commands" in sequence)){
         var response = responseForError("cmd_not_found");
 
+        eventData.error = "cmd_not_found";
         eventInterceptors.on_failed.forEach(function(interceptor){
-            var result = interceptor({
-                bot: bot,
-                message: message,
-                knowledgeType: knowledgeType,
-                captures: captures,
-                error: "seq_not_found",
-                // Helper data
-                config: configData,
-                // Helper functions
-                buildSentence: buildSentence,
-                responseForError: responseForError,
-                triggerSequence: triggerSequence,
-                logMessage: logMessage
-            });
+            var result = interceptor(eventData);
+            if(typeof(result) != "boolean" || !result){
+                cont = result;
+                return;
+            }
         });
 
         if(response){
@@ -352,9 +376,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                 try{
                     fs.accessSync(output_file);
                     result = yaml.safeLoad(
-                        fs.readFileSync(
-                            output_file, "utf8"
-                        ).replace(/\s\/\/.*(?=\n)|\s\/\/.*$/g, ""),
+                        fs.readFileSync(output_file, "utf8"),
                         {
                             json: true
                         }
@@ -460,6 +482,22 @@ function triggerSequence(eventData){
             }
         }
         if(!canParallel){
+            sequenceQueue.forEach(function(sequenceInfo){
+                if(sequenceInfo.sequenceId == sequenceId){
+                    var willAdd = true
+                    for(var index in sequenceInfo.notify){
+                        if(sequenceInfo.notify[index].user == message.user){
+                            willAdd = false;
+                            break;
+                        }
+                    }
+                    if(willAdd){
+                        sequenceInfo.notify.push(message);
+                    }
+                    return;
+                }
+            });
+
             // TODO: Include previous and current sequence in error message
             var response = responseForError(errorCode);
 
@@ -479,7 +517,8 @@ function triggerSequence(eventData){
 
     var sequenceInfo = {
         sequenceId: sequenceId,
-        eventData: eventData
+        eventData: eventData,
+        notify: [message]
     };
     sequenceQueue.push(sequenceInfo);
     runSequence();
@@ -723,6 +762,16 @@ function interceptMessage(bot, message){
                 logMessage("Stopped by extension.postEvent");
                 return;
             }
+        }
+
+        // TODO: Add more data
+        if("answers" in pattern){
+            bot.reply(message, buildSentence(
+                pattern["answers"],
+                getResponseInfo().extends(
+                    ("dictionary" in knowledge) ? knowledge["dictionary"] : {}
+                )
+            ));
         }
 
         return;
