@@ -19,6 +19,7 @@ knowledge: <Knowledge>
 ```yaml
 commands:
 output:
+working_dir:
 parallel: false
   allows: ["pattern", "*"]
   disallows: ["pattern", "*"]

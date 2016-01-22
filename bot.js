@@ -2,7 +2,7 @@
 * @Author: spywhere
 * @Date:   2016-01-14 21:36:44
 * @Last Modified by:   Sirisak Lueangsaksri
-* @Last Modified time: 2016-01-21 13:41:13
+* @Last Modified time: 2016-01-22 12:03:08
 */
 
 var fs = require("fs");
@@ -14,10 +14,10 @@ var storageData = {};
 var configData = {};
 var sequenceQueue = [];
 var eventInterceptors = {
-    "pre_event": [],
-    "on_event": [],
-    "post_event": [],
-    "on_failed": []
+    pre_event: [],
+    on_event: [],
+    post_event: [],
+    on_failed: []
 };
 
 var workingDirSuffix = "";
@@ -92,7 +92,7 @@ function reloadSequence(){
         configData = yaml.safeLoad(
             fs.readFileSync("config.yaml", "utf8")
         , {
-            "json": true
+            json: true
         });
         // Load extensions
         if(
@@ -135,7 +135,7 @@ function reloadSequence(){
                     configData = configData.extends(
                         yaml.safeLoad(
                             fs.readFileSync(configFile, {
-                                "json": true
+                                json: true
                             })
                         )
                     );
@@ -237,7 +237,50 @@ function sequenceCanParallel(sequence, lastSequence){
     return true;
 }
 
-function runSequence(sequenceInfo, eventData, currentCommand, processResult){
+function handleProcess(sequenceInfo, buildResult){
+    logMessage("[" + sequenceInfo.sequenceId + "] Response based on result");
+}
+
+function runSequence(sequenceInfo, currentCommand, processResult){
+    if(sequenceQueue.length <= 0){
+        logMessage("[DEBUG] End queue");
+        return;
+    }
+    if(!sequenceInfo){
+        var taskIndex = null;
+        for(var index in sequenceQueue){
+            if(
+                "is_running" in sequenceQueue[index] &&
+                sequenceQueue[index].is_running
+            ){
+                continue;
+            }
+            var sequence = configData.sequence[
+                sequenceQueue[index].sequenceId
+            ];
+            if(
+                index == 0 ||
+                (
+                    index > 0 &&
+                    sequenceCanParallel(
+                        sequence,
+                        sequenceQueue[index - 1].sequenceId
+                    )
+                )
+            ){
+                taskIndex = index;
+                break;
+            }
+        }
+        if(taskIndex == null){
+            logMessage("[DEBUG] No sequence can be parallel");
+            return;
+        }
+        sequenceInfo = sequenceQueue[taskIndex];
+        sequenceInfo.is_running = true;
+    }
+
+    var eventData = sequenceInfo.eventData;
     var sequenceId = eventData.sequenceId;
     var sequence = configData.sequence[sequenceId];
 
@@ -272,24 +315,122 @@ function runSequence(sequenceInfo, eventData, currentCommand, processResult){
         return;
     }
 
-    var command = sequence.commands[currentCommand];
-    var commandCallback = (function(sequenceInfo, eventData, currentCommand){
-        return function(error, stdout, stderr){
-            runBuild(sequenceInfo, eventData, currentCommand+1, {
-                "stdout": stdout,
-                "stderr": stderr,
-                "error": error
-            });
-        };
-    })(sequenceInfo, eventData, currentCommand);
-
     var workingDir = ".";
-
     if("working_dir" in sequence){
         workingDir = sequence.working_dir;
     }else if("working_dir" in configData.config){
         workingDir = configData.config.working_dir;
     }
+    workingDir = path.resolve(workingDir, workingDirSuffix);
+
+    if(currentCommand >= sequence.commands.length){
+        for(var index in sequenceQueue){
+            if(
+                sequenceQueue[index].sequenceId == sequenceId &&
+                "is_running" in sequenceQueue[index] &&
+                sequenceQueue[index].is_running
+            ){
+                sequenceQueue.splice(index, 1);
+                break;
+            }
+        }
+
+        var result = {};
+        if("output" in sequence){
+            if(typeof(sequence.output) == "boolean"){
+                if(sequence.output){
+                    result = yaml.safeLoad(processResult.stdout, {
+                        json: true
+                    });
+                }else{
+                    result = {
+                        output: processResult.stdout
+                    }
+                }
+            }else if(typeof(sequence.output) == "string"){
+                var output_file = path.join(workingDir, sequence.output);
+                try{
+                    fs.accessSync(output_file);
+                    result = yaml.safeLoad(
+                        fs.readFileSync(
+                            output_file, "utf8"
+                        ).replace(/\s\/\/.*(?=\n)|\s\/\/.*$/g, ""),
+                        {
+                            json: true
+                        }
+                    );
+                }catch(error){
+                    logMessage(
+                        "[" + sequenceId + "] And it's external failed"
+                    );
+                    handleProcess(sequenceInfo, {
+                        success: false,
+                        error_type: "output_not_found"
+                    });
+                    runSequence();
+                    return;
+                }
+            }
+        }
+
+        if(processResult.error){
+            logMessage(
+                "[" + sequenceId + "] And it's internal failed: " +
+                processResult.error
+            );
+            handleProcess(sequenceInfo, {
+                success: false,
+                error_type: "process_failed"
+            });
+        }else{
+            if("error" in result){
+                logMessage("[" + sequenceId + "] And it's external failed");
+                handleProcess(sequenceInfo, {
+                    success: false,
+                    error_type: "output_error",
+                    data: result
+                });
+            }else{
+                logMessage("[" + sequenceId + "] And it's succeed");
+                handleProcess(sequenceInfo, {
+                    success: true,
+                    data: result
+                });
+            }
+        }
+
+        runSequence();
+        return;
+    }
+    if(currentCommand > 0){
+        console.log("[" + sequenceId + "] And it's succeed");
+    }
+
+    var command = sequence.commands[currentCommand];
+    var commandCallback = (function(sequenceInfo, currentCommand){
+        return function(error, stdout, stderr){
+            runSequence(sequenceInfo, currentCommand+1, {
+                stdout: stdout,
+                stderr: stderr,
+                error: error
+            });
+        };
+    })(sequenceInfo, currentCommand);
+
+    logMessage(
+        "[" + sequenceId + "] Working Directory: " + path.normalize(workingDir)
+    );
+
+    var cdInfo = command.match(/^\s*cd\s*(.+)/mi);
+    if(cdInfo && cdInfo.length > 1){
+        workingDirSuffix = path.resolve(workingDirSuffix, cdInfo[1]);
+    }
+    logMessage("[" + sequenceId + "] Running: " + command);
+
+    exec(command, {
+        cwd: path.normalize(workingDir)
+    }, commandCallback);
+    return;
 }
 
 function triggerSequence(eventData){
@@ -337,10 +478,11 @@ function triggerSequence(eventData){
     }
 
     var sequenceInfo = {
-        sequenceId: sequenceId
+        sequenceId: sequenceId,
+        eventData: eventData
     };
     sequenceQueue.push(sequenceInfo);
-    runSequence(sequenceInfo, eventData);
+    runSequence();
 }
 
 function interceptMessage(bot, message){
@@ -585,6 +727,7 @@ function interceptMessage(bot, message){
 
         return;
     }
+    logMessage("[DEBUG] Store message");
 }
 
 controller.hears(
