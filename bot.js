@@ -172,7 +172,7 @@ function buildSentence(sentences, dictionary){
     }
 
     return sentence.replace(
-        /<((\w+|\*|')(\.(\w+|\*|'))*)(:((\w+)(,\w+)*))?>/g,
+        /<((\w+|\*|\^)(\.(\w+|\*|\^))*)(:((\w+)(,\w+)*))?>/g,
         dictionaryWord
     );
 }
