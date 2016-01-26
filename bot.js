@@ -154,16 +154,18 @@ function buildSentence(sentences, dictionary){
             output = JSON.stringify(output);
         }
         var willLower = true;
-        tags.toLowerCase().split(",").forEach(function(tag){
-            willLower = false;
-            if(tag === "raw"){
-                return;
-            }else if(tag === "upper"){
-                output = output.toUpperCase();
-            }else if(tag === "lower"){
-                output = output.toLowerCase();
-            }
-        });
+        if(tags){
+            tags.toLowerCase().split(",").forEach(function(tag){
+                willLower = false;
+                if(tag === "raw"){
+                    return;
+                }else if(tag === "upper"){
+                    output = output.toUpperCase();
+                }else if(tag === "lower"){
+                    output = output.toLowerCase();
+                }
+            });
+        }
         if(willLower){
             return output.toLowerCase();
         }else{
