@@ -157,9 +157,7 @@ function buildSentence(sentences, dictionary){
         if(tags){
             tags.toLowerCase().split(",").forEach(function(tag){
                 willLower = false;
-                if(tag === "raw"){
-                    return;
-                }else if(tag === "upper"){
+                if(tag === "upper"){
                     output = output.toUpperCase();
                 }else if(tag === "lower"){
                     output = output.toLowerCase();
@@ -174,7 +172,7 @@ function buildSentence(sentences, dictionary){
     }
 
     return sentence.replace(
-        /<((\w+|\*|')(\.(\w+|\*|'))*)(:((\w+)(,\w+)*))?>/,
+        /<((\w+|\*|')(\.(\w+|\*|'))*)(:((\w+)(,\w+)*))?>/g,
         dictionaryWord
     );
 }
