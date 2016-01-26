@@ -75,7 +75,7 @@ function queryValue(data, query, prefix){
     //   Next time, check the query, if matched then returns the value
 
     if(query === undefined || query === null || query === ""){
-        return JSON.stringify(data);
+        return data;
     }
     var splitPoint = query.indexOf(".");
     var key = query;
@@ -140,7 +140,7 @@ function queryValue(data, query, prefix){
         }
         return queryValue(data[key], query.substring(splitPoint + 1), prefix);
     }else{
-        return JSON.stringify(data);
+        return data;
     }
 }
 
