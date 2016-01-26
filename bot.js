@@ -2,13 +2,14 @@
 * @Author: spywhere
 * @Date:   2016-01-14 21:36:44
 * @Last Modified by:   Sirisak Lueangsaksri
-* @Last Modified time: 2016-01-22 15:47:08
+* @Last Modified time: 2016-01-25 17:10:20
 */
 
 var fs = require("fs");
 var moment = require("moment");
 var yaml = require("js-yaml");
 
+var cacheKeys = {};
 var dataChanged = false;
 var storageData = {};
 var configData = {};
@@ -34,19 +35,19 @@ var presetCommands = [
         "pattern": /shutdown/i,
         "operation": reloadSequence
     }
-]
+];
 
 Object.defineProperty(Object.prototype, "extends", {
     enumerable: false,
     value: function(obj, rootOnly){
-        if(typeof(obj) != "object"){
+        if(typeof(obj) !== "object"){
             return this;
         }
         for(var key in obj){
-            if(key in this && typeof(obj[key]) == "object" && !rootOnly){
-                this[key].extends(obj[key]);
-            }else if(key in this && typeof(obj[key]) == "array" && !rootOnly){
+            if(key in this && Array.isArray(obj[key]) && !rootOnly){
                 this[key].concat(obj[key]);
+            }else if(key in this && typeof(obj[key]) === "object" && !rootOnly){
+                this[key].extends(obj[key]);
             }else{
                 this[key] = obj[key];
             }
@@ -67,32 +68,110 @@ function saveStorageData(){
     dataChanged = false;
 }
 
+function queryValue(data, query, prefix){
+
+    // Map query
+    //   When randomized ^, store the query and the value in a dict
+    //   Next time, check the query, if matched then returns the value
+
+    if(query === undefined || query === null || query === ""){
+        return JSON.stringify(data);
+    }
+    var splitPoint = query.indexOf(".");
+    var key = query;
+
+    if(splitPoint < 0){
+        splitPoint = key.length;
+    }else{
+        key = key.substring(0, splitPoint);
+    }
+
+    if(!prefix){
+        prefix = key;
+    }else{
+        prefix += "." + key;
+    }
+
+    var storeKey = false;
+    if(key === "^"){
+        if(prefix in cacheKeys){
+            key = cacheKeys[prefix];
+        }else{
+            storeKey = true;
+            key = "*";
+        }
+    }
+
+    if(Array.isArray(data)){
+        if(data.length <= 0){
+            return "";
+        }
+        if(key !== "*" && /^(-?\d+)$/.test(key)){
+            key = Number(key);
+        }else if(key === "*"){
+            key = Math.floor(Math.random() * data.length);
+            if(storeKey){
+                cacheKeys[prefix] = key;
+            }
+            return queryValue(data[key], query.substring(splitPoint + 1), prefix);
+        }else{
+            // Missing value for specified key
+            return "";
+        }
+        if(key < -data.length || data.length <= key){
+            // Missing value for specified key
+            return "";
+        }else{
+            if(key < 0){
+                key += data.length;
+            }
+            return queryValue(data[key], query.substring(splitPoint + 1), prefix);
+        }
+    }else if(typeof(data) === "object"){
+        if(key !== "*" && !(key in data)){
+            // Missing value for specified key
+            return "";
+        }else if(key === "*"){
+            var keys = Object.keys(data);
+            key = keys[Math.floor(Math.random() * keys.length)];
+            if(storeKey){
+                cacheKeys[prefix] = key;
+            }
+        }
+        return queryValue(data[key], query.substring(splitPoint + 1), prefix);
+    }else{
+        return JSON.stringify(data);
+    }
+}
+
 function buildSentence(sentences, dictionary){
     var sentence = sentences[Math.floor(Math.random() * sentences.length)];
-    var generatedDictionary = {};
-    for(var word in dictionary){
-        var words = dictionary[word];
-        if(typeof(words) == "object"){
-            generatedDictionary[word] = words[
-                Math.floor(Math.random() * words.length)
-            ];
-        }else{
-            generatedDictionary[word] = words;
-        }
-    }
-    function dictionaryWord(macro, word, tmp, tag){
-        if(word in generatedDictionary){
-            var output = generatedDictionary[word];
-            if(tag && tag.toLowerCase() == "raw"){
-                return output;
-            }else if(tag && tag.toLowerCase() == "upper"){
-                return output.toUpperCase();
+    cacheKeys = {};
+
+    function dictionaryWord(macro, query, t2, t3 ,t4, t5, tags){
+        var output = queryValue(dictionary, query);
+        var willLower = true;
+        tags.toLowerCase().split(",").forEach(function(tag){
+            willLower = false;
+            if(tag === "raw"){
+                return;
+            }else if(tag === "upper"){
+                output = output.toUpperCase();
+            }else if(tag === "lower"){
+                output = output.toLowerCase();
             }
+        });
+        if(willLower){
             return output.toLowerCase();
+        }else{
+            return output;
         }
-        return "";
     }
-    return sentence.replace(/<(\w+)(:(\w+))?>/gi, dictionaryWord);
+
+    return sentence.replace(
+        /<((\w+|\*|')(\.(\w+|\*|'))*)(:((\w+)(,\w+)*))?>/,
+        dictionaryWord
+    );
 }
 
 var Botkit = require("botkit");
@@ -188,13 +267,13 @@ reloadSequence();
 
 if(!("config" in configData) || !("bot_token" in configData.config)){
     logMessage("Configuration file is incomplete");
-    return;
+    process.exit();
 }
 
 var controller = Botkit.slackbot();
 var bot = controller.spawn({
     token: configData.config.bot_token
-})
+});
 
 bot.startRTM(function(err,bot,payload) {
     if (err) {
@@ -209,9 +288,9 @@ function shutdownSequence(matches){
 
 function getResponseInfo(eventData){
     var info = {};
-    // TODO: Add current sequence info
-    // TODO: Add parallel sequence (A) info ([A <- Current])
     // TODO: Add queue info
+    // TODO: Add parallel sequence (A) info ([A <- Current])
+    // TODO: Add current sequence info
     // TODO: Add captures
     extensions.response_info.forEach(function(responseInfo){
         info.extends(responseInfo(eventData));
@@ -246,10 +325,10 @@ function sequenceCanParallel(sequence, lastSequence){
         return null;
     }
 
-    if(typeof(sequence.parallel) == "boolean"){
+    if(typeof(sequence.parallel) === "boolean"){
         return sequence.parallel;
     }else if(
-        typeof(sequence.parallel) == "object" &&
+        typeof(sequence.parallel) === "object" &&
         (
             "allows" in sequence.parallel ||
             "disallows" in sequence.parallel
@@ -296,15 +375,14 @@ function handleProcess(sequenceInfo, buildResult){
             )
         );
     }else{
-        var completionMessage = responseForError(
+        completionMessage = responseForError(
             buildResult["error_type"],
             eventData
         );
         eventData.error = buildResult["error_type"];
         extensions.on_failed.forEach(function(interceptor){
             var result = interceptor(eventData);
-            if(typeof(result) != "boolean" || !result){
-                cont = result;
+            if(typeof(result) !== "boolean" || !result){
                 return;
             }
         });
@@ -335,7 +413,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                 sequenceQueue[index].sequenceId
             ];
             if(
-                index == 0 ||
+                index === 0 ||
                 (
                     index > 0 &&
                     sequenceCanParallel(
@@ -348,7 +426,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                 break;
             }
         }
-        if(taskIndex == null){
+        if(taskIndex === null){
             logMessage("[DEBUG] No sequence can be parallel");
             return;
         }
@@ -371,14 +449,13 @@ function runSequence(sequenceInfo, currentCommand, processResult){
         eventData.error = "cmd_not_found";
         extensions.on_failed.forEach(function(interceptor){
             var result = interceptor(eventData);
-            if(typeof(result) != "boolean" || !result){
-                cont = result;
+            if(typeof(result) !== "boolean" || !result){
                 return;
             }
         });
 
         if(response){
-            bot.reply(message, response);
+            bot.reply(eventData.message, response);
         }
         return;
     }
@@ -394,7 +471,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
     if(currentCommand >= sequence.commands.length){
         for(var index in sequenceQueue){
             if(
-                sequenceQueue[index].sequenceId == sequenceId &&
+                sequenceQueue[index].sequenceId === sequenceId &&
                 "is_running" in sequenceQueue[index] &&
                 sequenceQueue[index].is_running
             ){
@@ -405,7 +482,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
 
         var result = {};
         if("output" in sequence){
-            if(typeof(sequence.output) == "boolean"){
+            if(typeof(sequence.output) === "boolean"){
                 if(sequence.output){
                     result = yaml.safeLoad(processResult.stdout, {
                         json: true
@@ -413,9 +490,9 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                 }else{
                     result = {
                         output: processResult.stdout
-                    }
+                    };
                 }
-            }else if(typeof(sequence.output) == "string"){
+            }else if(typeof(sequence.output) === "string"){
                 var output_file = path.join(workingDir, sequence.output);
                 try{
                     fs.accessSync(output_file);
@@ -529,7 +606,7 @@ function triggerSequence(eventData){
         }
         var lastSequence = sequenceQueue[sequenceQueue.length - 1].sequenceId;
         var canParallel = sequenceCanParallel(sequence, lastSequence);
-        if(canParallel == null){
+        if(canParallel === null){
             canParallel = false;
             if(
                 hasResponseForError("seq_running") &&
@@ -542,10 +619,10 @@ function triggerSequence(eventData){
         }
         if(!canParallel){
             sequenceQueue.forEach(function(sequenceInfo){
-                if(sequenceInfo.sequenceId == sequenceId){
-                    var willAdd = true
+                if(sequenceInfo.sequenceId === sequenceId){
+                    var willAdd = true;
                     for(var index in sequenceInfo.notify){
-                        if(sequenceInfo.notify[index].user == message.user){
+                        if(sequenceInfo.notify[index].user === message.user){
                             willAdd = false;
                             break;
                         }
@@ -561,7 +638,7 @@ function triggerSequence(eventData){
 
             extensions.on_failed.forEach(function(interceptor){
                 var result = interceptor(eventData);
-                if(typeof(result) != "boolean" || !result){
+                if(typeof(result) !== "boolean" || !result){
                     return;
                 }
             });
@@ -641,13 +718,13 @@ function interceptMessage(bot, message){
                 getResponseInfo: getResponseInfo,
                 logMessage: logMessage
             });
-            if(typeof(result) != "boolean" || !result){
+            if(typeof(result) !== "boolean" || !result){
                 cont = result;
                 return;
             }
         });
-        if(typeof(cont) != "boolean" || !cont){
-            if(typeof(cont) == "boolean"){
+        if(typeof(cont) !== "boolean" || !cont){
+            if(typeof(cont) === "boolean"){
                 logMessage("Skipped by extension.preEvent");
                 continue;
             }else{
@@ -664,7 +741,7 @@ function interceptMessage(bot, message){
                     mappings.forEach(function(mapping){
                         if(
                             "value" in mapping && "map" in mapping &&
-                            mapping.value == captures[captureName]
+                            mapping.value === captures[captureName]
                         ){
                             sequenceId = mapping.map;
                             return;
@@ -729,13 +806,13 @@ function interceptMessage(bot, message){
             cont = true;
             extensions.on_failed.forEach(function(interceptor){
                 var result = interceptor(errorData);
-                if(typeof(result) != "boolean" || !result){
+                if(typeof(result) !== "boolean" || !result){
                     cont = result;
                     return;
                 }
             });
-            if(typeof(cont) != "boolean" || !cont){
-                if(typeof(cont) == "boolean"){
+            if(typeof(cont) !== "boolean" || !cont){
+                if(typeof(cont) === "boolean"){
                     logMessage("Skipped by extension.onFailed");
                     continue;
                 }else{
@@ -753,7 +830,7 @@ function interceptMessage(bot, message){
         if("supported_sequences" in knowledge){
             var supportedSequences = knowledge.supported_sequences;
             supportedSequences.forEach(function(seq){
-                if(seq == sequenceId){
+                if(seq === sequenceId){
                     supported = true;
                     return;
                 }
@@ -790,13 +867,13 @@ function interceptMessage(bot, message){
         cont = true;
         extensions.on_event.forEach(function(interceptor){
             var result = interceptor(eventData);
-            if(typeof(result) != "boolean" || !result){
+            if(typeof(result) !== "boolean" || !result){
                 cont = result;
                 return;
             }
         });
-        if(typeof(cont) != "boolean" || !cont){
-            if(typeof(cont) == "boolean"){
+        if(typeof(cont) !== "boolean" || !cont){
+            if(typeof(cont) === "boolean"){
                 logMessage("Skipped by extension.onEvent");
                 continue;
             }else{
@@ -814,7 +891,7 @@ function interceptMessage(bot, message){
             ));
         }
 
-        if(typeof(sequence) == "function"){
+        if(typeof(sequence) === "function"){
             sequence(eventData);
         }else{
             triggerSequence(eventData);
@@ -823,13 +900,13 @@ function interceptMessage(bot, message){
         cont = true;
         extensions.post_event.forEach(function(interceptor){
             var result = interceptor(eventData);
-            if(typeof(result) != "boolean" || !result){
+            if(typeof(result) !== "boolean" || !result){
                 cont = result;
                 return;
             }
         });
-        if(typeof(cont) != "boolean" || !cont){
-            if(typeof(cont) == "boolean"){
+        if(typeof(cont) !== "boolean" || !cont){
+            if(typeof(cont) === "boolean"){
                 logMessage("Continue by extension.postEvent");
                 continue;
             }else{
