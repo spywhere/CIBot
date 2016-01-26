@@ -150,6 +150,9 @@ function buildSentence(sentences, dictionary){
 
     function dictionaryWord(macro, query, t2, t3 ,t4, t5, tags){
         var output = queryValue(dictionary, query);
+        if(typeof(output) === "object"){
+            output = JSON.stringify(output);
+        }
         var willLower = true;
         tags.toLowerCase().split(",").forEach(function(tag){
             willLower = false;
