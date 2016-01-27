@@ -337,8 +337,9 @@ function sequenceCanParallel(sequence, lastSequence){
             "disallows" in sequence.parallel
         )
     ){
+        var allow;
         if("disallows" in sequence.parallel){
-            var allow = true;
+            allow = true;
             sequence.parallel.disallows.forEach(function(pattern){
                 if(lastSequence.match("^" + pattern + "$")){
                     allow = false;
@@ -348,7 +349,7 @@ function sequenceCanParallel(sequence, lastSequence){
             return allow;
         }
         if("allows" in sequence.parallel){
-            var allow = false;
+            allow = false;
             sequence.parallel.allows.forEach(function(pattern){
                 if(lastSequence.match("^" + pattern + "$")){
                     allow = true;
@@ -403,6 +404,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
         logMessage("[DEBUG] End queue");
         return;
     }
+    var sequence = null;
     if(!sequenceInfo){
         var taskIndex = null;
         for(var index in sequenceQueue){
@@ -412,7 +414,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
             ){
                 continue;
             }
-            var sequence = configData.sequence[
+            sequence = configData.sequence[
                 sequenceQueue[index].sequenceId
             ];
             if(
@@ -439,7 +441,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
 
     var eventData = sequenceInfo.eventData;
     var sequenceId = eventData.sequenceId;
-    var sequence = configData.sequence[sequenceId];
+    sequence = configData.sequence[sequenceId];
 
     if(!currentCommand){
         workingDirSuffix = "";
@@ -680,9 +682,10 @@ function interceptMessage(bot, message){
         var questions = pattern.questions;
         var match = null;
         var captureNames = [];
-        for(var index=0;index<questions.length;index++){
+        for(var index=0;index < questions.length;index++){
             captureNames = [];
             var question = questions[index];
+
             match = message.text.match(new RegExp(question, "i"));
             if(match){
                 if(
@@ -699,7 +702,7 @@ function interceptMessage(bot, message){
             continue;
         }
         var captures = {};
-        for(var index=0;index<captureNames.length;index++){
+        for(var index=0;index < captureNames.length;index++){
             if(captureNames[index]){
                 captures[captureNames[index]] = match[index];
             }
