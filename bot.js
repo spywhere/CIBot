@@ -168,7 +168,11 @@ function buildSentence(sentences, dictionary){
     ){
         var output = queryValue(dictionary, query);
         if(output === null){
-            output = defaultValue;
+            if(defaultValue){
+                output = defaultValue;
+            }else{
+                output = "";
+            }
         }
         if(typeof(output) === "object"){
             output = JSON.stringify(output);
