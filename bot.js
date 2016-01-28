@@ -16,6 +16,7 @@ var storageData = {};
 var configData;
 var sequenceQueue = [];
 var extensions;
+var extensionsLoaded = false;
 
 var workingDirSuffix = "";
 
@@ -230,7 +231,9 @@ function reloadSequence(matches){
             configData.config.extensions.forEach(
                 function(extensionPath){
                     logMessage("Loading extension " + extensionPath + "...");
-                    decache(extensionPath);
+                    if(extensionsLoaded){
+                        decache(extensionPath);
+                    }
                     var extension = require(extensionPath);
 
                     if("preEvent" in extension){
@@ -282,6 +285,7 @@ function reloadSequence(matches){
             );
         }
     }catch(err){
+        extensionsLoaded = false;
         logMessage("Error while loading: " + err);
         return {
             stdout: "",
@@ -289,6 +293,7 @@ function reloadSequence(matches){
             error: "Error while loading: " + err
         };
     }
+    extensionsLoaded = true;
     return {};
 }
 
