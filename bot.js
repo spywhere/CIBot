@@ -81,11 +81,6 @@ function saveStorageData(){
 }
 
 function queryValue(data, query, prefix){
-
-    // Map query
-    //   When randomized ^, store the query and the value in a dict
-    //   Next time, check the query, if matched then returns the value
-
     if(query === undefined || query === null || query === ""){
         return data;
     }
@@ -169,7 +164,7 @@ function buildSentence(sentences, dictionary){
     cacheKeys = {};
 
     function dictionaryWord(
-        macro, query, t2, t3 ,t4, t5, defaultValue, t7, tags
+        macro, query, t2, t3 ,t4, t5, defaultValue, t7, t8, tags
     ){
         var output = queryValue(dictionary, query);
         if(output === null){
@@ -195,9 +190,8 @@ function buildSentence(sentences, dictionary){
             return output;
         }
     }
-
     return sentence.replace(
-        /<((\w+|\*|\^)(\.(\w+|\*|\^))*)(=([^:>]*))?(:((\w+)(,\w+)*))?>/g,
+        /<((\w+|\*|\^)(\.(\w+|\*|\^))*)((=([^:>]*))|(:((\w+)(,\w+)*)))*>/g,
         dictionaryWord
     );
 }
@@ -324,18 +318,42 @@ function getResponseInfo(eventData){
     var info = {};
 
     if(eventData){
-        info["message"] = eventData.message;
+        info.message = eventData.message;
 
         if("knowledgeType" in eventData){
-            info["knowledgeType"] = eventData;
+            info.knowledge_type = eventData;
         }
 
         // Queue Info
-        info["queue"] = {
-            // Building
-            // Queuing
-            // All queue
-        };
+        if(sequenceQueue.length > 0){
+            info.queue = {};
+
+            var runningSequences = [];
+            var queuingSequences = [];
+            var queueSequences = [];
+            sequenceQueue.forEach(function(sequenceData){
+                // All queue
+                queueSequences.push(eventData.config.sequence[sequenceData.sequenceId]);
+
+                if("is_running" in sequenceData && sequenceData.is_running){
+                    // Running sequence
+                    runningSequences.push(eventData.config.sequence[sequenceData.sequenceId]);
+                }else{
+                    // Queuing sequence
+                    queuingSequences.push(eventData.config.sequence[sequenceData.sequenceId]);
+                }
+            });
+
+            if(runningSequences){
+                info.queue.running_sequences = runningSequences;
+            }
+            if(queuingSequences){
+                info.queue.queuing_sequences = queuingSequences;
+            }
+            if(queueSequences){
+                info.queue.queue_sequences = queueSequences;
+            }
+        }
 
         if("sequenceId" in eventData){
             var preceedingSequence = null;
@@ -355,7 +373,7 @@ function getResponseInfo(eventData){
                     preceedingSequence &&
                     preceedingSequence in event.config.sequenceInfo
                 ){
-                    info["parallelSequence"] = eventData.config.sequenceInfo[
+                    info.parallel_sequence = eventData.config.sequenceInfo[
                         preceedingSequence
                     ];
                 }
@@ -363,24 +381,24 @@ function getResponseInfo(eventData){
                 // Current Sequence Info
                 if(eventData.sequenceId in event.config.sequenceInfo){
                     var sequenceId = eventData.sequenceId;
-                    info["sequence"] = eventData.config.sequenceInfo[
+                    info.sequence = eventData.config.sequenceInfo[
                         sequenceId
                     ];
                 }
                 if(currentInQueue && preceedingSequence){
-                    info["sequenceCanParallel"] = sequenceCanParallel(
+                    info.sequence_can_parallel = sequenceCanParallel(
                         eventData.config.sequence[eventData.sequenceId],
                         preceedingSequence
                     );
                 }
             }
 
-            info["sequenceId"] = eventData.sequenceId;
+            info.sequence_id = eventData.sequenceId;
         }
 
         // Captures Info
         if("captures" in eventData){
-            info["captures"] = eventData.captures;
+            info.captures = eventData.captures;
         }
     }
 
