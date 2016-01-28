@@ -5,37 +5,46 @@
 * @Last Modified time: 2016-01-25 17:10:20
 */
 
+var decache = require("decache");
 var fs = require("fs");
 var moment = require("moment");
 var yaml = require("js-yaml");
 
-var cacheKeys = {};
+var cacheKeys;
 var dataChanged = false;
 var storageData = {};
-var configData = {};
+var configData;
 var sequenceQueue = [];
-var extensions = {
-    pre_event: [],
-    on_event: [],
-    post_event: [],
-    on_failed: [],
-    response_info: []
-};
+var extensions;
 
 var workingDirSuffix = "";
 
-var presetCommands = [
-    {
-        "pattern": /^\s*cd\s*(.+)/mi,
-        "operation": changeWorkingDirectory
-    }, {
-        "pattern": /reload/i,
-        "operation": reloadSequence
-    }, {
-        "pattern": /shutdown/i,
-        "operation": reloadSequence
-    }
-];
+var presetCommands;
+
+function resetSettings(){
+    cacheKeys = {};
+    configData = {};
+    extensions = {
+        pre_event: [],
+        on_event: [],
+        post_event: [],
+        on_failed: [],
+        response_info: []
+    };
+
+    presetCommands = [
+        {
+            "pattern": /^\s*cd\s*(.+)/mi,
+            "operation": changeWorkingDirectory
+        }, {
+            "pattern": /reload/i,
+            "operation": reloadSequence
+        }, {
+            "pattern": /shutdown/i,
+            "operation": reloadSequence
+        }
+    ];
+}
 
 Object.defineProperty(Object.prototype, "extends", {
     enumerable: false,
@@ -46,7 +55,9 @@ Object.defineProperty(Object.prototype, "extends", {
         for(var key in obj){
             if(key in this && Array.isArray(obj[key]) && !rootOnly){
                 this[key].concat(obj[key]);
-            }else if(key in this && typeof(obj[key]) === "object" && !rootOnly){
+            }else if(
+                key in this && typeof(obj[key]) === "object" && !rootOnly
+            ){
                 this[key].extends(obj[key]);
             }else{
                 this[key] = obj[key];
@@ -104,7 +115,7 @@ function queryValue(data, query, prefix){
 
     if(Array.isArray(data)){
         if(data.length <= 0){
-            return "";
+            return null;
         }
         if(key !== "*" && /^(-?\d+)$/.test(key)){
             key = Number(key);
@@ -113,24 +124,32 @@ function queryValue(data, query, prefix){
             if(storeKey){
                 cacheKeys[prefix] = key;
             }
-            return queryValue(data[key], query.substring(splitPoint + 1), prefix);
+            return queryValue(
+                data[key],
+                query.substring(splitPoint + 1),
+                prefix
+            );
         }else{
             // Missing value for specified key
-            return "";
+            return null;
         }
         if(key < -data.length || data.length <= key){
             // Missing value for specified key
-            return "";
+            return null;
         }else{
             if(key < 0){
                 key += data.length;
             }
-            return queryValue(data[key], query.substring(splitPoint + 1), prefix);
+            return queryValue(
+                data[key],
+                query.substring(splitPoint + 1),
+                prefix
+            );
         }
     }else if(typeof(data) === "object"){
         if(key !== "*" && !(key in data)){
             // Missing value for specified key
-            return "";
+            return null;
         }else if(key === "*"){
             var keys = Object.keys(data);
             key = keys[Math.floor(Math.random() * keys.length)];
@@ -148,8 +167,13 @@ function buildSentence(sentences, dictionary){
     var sentence = sentences[Math.floor(Math.random() * sentences.length)];
     cacheKeys = {};
 
-    function dictionaryWord(macro, query, t2, t3 ,t4, t5, tags){
+    function dictionaryWord(
+        macro, query, t2, t3 ,t4, t5, defaultValue, t7, tags
+    ){
         var output = queryValue(dictionary, query);
+        if(output === null){
+            output = defaultValue;
+        }
         if(typeof(output) === "object"){
             output = JSON.stringify(output);
         }
@@ -172,7 +196,7 @@ function buildSentence(sentences, dictionary){
     }
 
     return sentence.replace(
-        /<((\w+|\*|\^)(\.(\w+|\*|\^))*)(:((\w+)(,\w+)*))?>/g,
+        /<((\w+|\*|\^)(\.(\w+|\*|\^))*)(=([^:>]*))?(:((\w+)(,\w+)*))?>/g,
         dictionaryWord
     );
 }
@@ -189,6 +213,7 @@ function changeWorkingDirectory(matches){
 }
 
 function reloadSequence(matches){
+    resetSettings();
     try{
         configData = {};
         logMessage("Loading config.yaml...");
@@ -205,6 +230,7 @@ function reloadSequence(matches){
             configData.config.extensions.forEach(
                 function(extensionPath){
                     logMessage("Loading extension " + extensionPath + "...");
+                    decache(extensionPath);
                     var extension = require(extensionPath);
 
                     if("preEvent" in extension){
@@ -291,10 +317,68 @@ function shutdownSequence(matches){
 
 function getResponseInfo(eventData){
     var info = {};
-    // TODO: Add queue info
-    // TODO: Add parallel sequence (A) info ([A <- Current])
-    // TODO: Add current sequence info
-    // TODO: Add captures
+
+    if(eventData){
+        info["message"] = eventData.message;
+
+        if("knowledgeType" in eventData){
+            info["knowledgeType"] = eventData;
+        }
+
+        // Queue Info
+        info["queue"] = {
+            // Building
+            // Queuing
+            // All queue
+        };
+
+        if("sequenceId" in eventData){
+            var preceedingSequence = null;
+            var currentInQueue = false;
+            sequenceQueue.forEach(function(sequenceData){
+                if(sequenceData.sequenceId === eventData.sequenceId){
+                    currentInQueue = true;
+                    return;
+                }
+                preceedingSequence = sequenceData.sequenceId;
+            });
+
+            if("config" in eventData && "sequenceInfo" in eventData.config){
+                // Parallel Info
+                if(
+                    currentInQueue &&
+                    preceedingSequence &&
+                    preceedingSequence in event.config.sequenceInfo
+                ){
+                    info["parallelSequence"] = eventData.config.sequenceInfo[
+                        preceedingSequence
+                    ];
+                }
+
+                // Current Sequence Info
+                if(eventData.sequenceId in event.config.sequenceInfo){
+                    var sequenceId = eventData.sequenceId;
+                    info["sequence"] = eventData.config.sequenceInfo[
+                        sequenceId
+                    ];
+                }
+                if(currentInQueue && preceedingSequence){
+                    info["sequenceCanParallel"] = sequenceCanParallel(
+                        eventData.config.sequence[eventData.sequenceId],
+                        preceedingSequence
+                    );
+                }
+            }
+
+            info["sequenceId"] = eventData.sequenceId;
+        }
+
+        // Captures Info
+        if("captures" in eventData){
+            info["captures"] = eventData.captures;
+        }
+    }
+
     extensions.response_info.forEach(function(responseInfo){
         info.extends(responseInfo(eventData));
     });
