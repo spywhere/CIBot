@@ -72,12 +72,50 @@ function logMessage(message){
     console.log(moment().format("DD-MMM-YYYY HH:mm:ss ") + message);
 }
 
+function loadStorageData(){
+    var fileExists;
+    try{
+        fs.accessSync(configData.config.storage_file, fs.R_OK);
+        fileExists = true;
+    }catch(exception){
+        fileExists = false;
+    }
+    try{
+        if(fileExists){
+            storageData = yaml.safeLoad(
+                fs.readFileSync(configData.config.storage_file, {
+                    json: true
+                }).toString()
+            );
+            logMessage("Storage data loaded");
+        }
+
+        var saveInterval = 60000;
+        if("save_interval" in configData.config){
+            saveInterval = configData.config.save_interval;
+        }
+        setInterval(saveStorageData, saveInterval);
+        logMessage("Storage data will save on every " + (saveInterval / 1000).toFixed(3) + " seconds");
+    }catch(exception){
+        logMessage("Error while loading storage file. Will try again in 3 seconds...");
+        setTimeout(loadStorageData, 3000);
+    }
+}
+
 function saveStorageData(){
     if(!dataChanged){
         return;
     }
-    // TODO: Save storage data
-    dataChanged = false;
+    fs.writeFile(configData.config.storage_file, yaml.safeDump(storageData, {
+        skipInvalid: true
+    }), "utf8", function(error){
+        if(error){
+            logMessage("Error while saving storage data");
+            return;
+        }
+        dataChanged = false;
+        logMessage("Storage data saved");
+    });
 }
 
 function queryValue(data, query, prefix){
@@ -276,7 +314,7 @@ function reloadSequence(matches){
                         yaml.safeLoad(
                             fs.readFileSync(configFile, {
                                 json: true
-                            })
+                            }).toString()
                         )
                     );
                 }
@@ -297,7 +335,7 @@ function reloadSequence(matches){
 
 reloadSequence();
 
-if(!("config" in configData) || !("bot_token" in configData.config)){
+if(!("config" in configData) || !("bot_token" in configData.config) || !("storage_file" in configData.config)){
     logMessage("Configuration file is incomplete");
     process.exit();
 }
@@ -312,6 +350,8 @@ bot.startRTM(function(err,bot,payload) {
         throw new Error("Could not connect to Slack");
     }
 });
+
+loadStorageData();
 
 function shutdownSequence(matches){
     process.exit();
@@ -328,7 +368,10 @@ function getResponseInfo(eventData){
             info.knowledge_type = eventData;
         }
 
+        // TODO: Date/Time Info
+
         // Queue Info
+        // TODO: Sequence Elapse Time
         if(sequenceQueue.length > 0){
             info.queue = {};
 
@@ -383,6 +426,7 @@ function getResponseInfo(eventData){
                 }
 
                 // Current Sequence Info
+                // TODO: Current Sequence Elapse Time
                 if(eventData.sequenceId in event.config.sequenceInfo){
                     var sequenceId = eventData.sequenceId;
                     info.sequence = eventData.config.sequenceInfo[
@@ -510,6 +554,59 @@ function handleProcess(sequenceInfo, buildResult){
     }
 }
 
+function collectSequenceElapseTime(elapseTime, sequenceId){
+    if(!("run_time" in storageData)){
+        storageData.run_time = {
+            minimum: {},
+            average: {},
+            maximum: {}
+        };
+    }
+    // Global Statistics
+    if("*" in storageData.run_time.minimum){
+        if(elapseTime < storageData.run_time.minimum["*"]){
+            storageData.run_time.minimum["*"] = elapseTime;
+        }
+    }else{
+        storageData.run_time.minimum["*"] = elapseTime;
+    }
+    if("*" in storageData.run_time.average){
+        storageData.run_time.average["*"] += elapseTime;
+        storageData.run_time.average["*"] /= 2;
+    }else{
+        storageData.run_time.average["*"] = elapseTime;
+    }
+    if("*" in storageData.run_time.maximum){
+        if(elapseTime > storageData.run_time.maximum["*"]){
+            storageData.run_time.maximum["*"] = elapseTime;
+        }
+    }else{
+        storageData.run_time.maximum["*"] = elapseTime;
+    }
+    // Sequence Statistics
+    if(sequenceId in storageData.run_time.minimum){
+        if(elapseTime < storageData.run_time.minimum[sequenceId]){
+            storageData.run_time.minimum[sequenceId] = elapseTime;
+        }
+    }else{
+        storageData.run_time.minimum[sequenceId] = elapseTime;
+    }
+    if(sequenceId in storageData.run_time.average){
+        storageData.run_time.average[sequenceId] += elapseTime;
+        storageData.run_time.average[sequenceId] /= 2;
+    }else{
+        storageData.run_time.average[sequenceId] = elapseTime;
+    }
+    if(sequenceId in storageData.run_time.maximum){
+        if(elapseTime > storageData.run_time.maximum[sequenceId]){
+            storageData.run_time.maximum[sequenceId] = elapseTime;
+        }
+    }else{
+        storageData.run_time.maximum[sequenceId] = elapseTime;
+    }
+    dataChanged = true;
+}
+
 function runSequence(sequenceInfo, currentCommand, processResult){
     if(sequenceQueue.length <= 0){
         logMessage("[DEBUG] End queue");
@@ -519,6 +616,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
     if(!sequenceInfo){
         var taskIndex = null;
         for(var index in sequenceQueue){
+            index = parseInt(index, 10);
             if(
                 "is_running" in sequenceQueue[index] &&
                 sequenceQueue[index].is_running
@@ -555,6 +653,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
     sequence = configData.sequence[sequenceId];
 
     if(!currentCommand){
+        sequenceInfo.startTime = moment();
         workingDirSuffix = "";
         currentCommand = 0;
     }
@@ -585,6 +684,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
     workingDir = path.resolve(workingDir, workingDirSuffix);
 
     if(currentCommand >= sequence.commands.length){
+        var elapseTime = moment(moment().diff(sequenceInfo.startTime));
         for(var index in sequenceQueue){
             if(
                 sequenceQueue[index].sequenceId === sequenceId &&
@@ -627,6 +727,8 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                         success: false,
                         error_type: "output_not_found"
                     });
+                    logMessage("[" + sequenceId + "] Finished in " + elapseTime.format("m:ss.SSS"));
+                    collectSequenceElapseTime(elapseTime, sequenceId);
                     runSequence();
                     return;
                 }
@@ -661,7 +763,8 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                 });
             }
         }
-
+        logMessage("[" + sequenceId + "] Finished in " + elapseTime.format("m:ss.SSS"));
+        collectSequenceElapseTime(elapseTime, sequenceId);
         runSequence();
         return;
     }
