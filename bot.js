@@ -589,6 +589,7 @@ function collectSequenceElapseTime(elapseTime, sequenceId){
         };
     }
     // Global Statistics
+    elapseTime = elapseTime.valueOf();
     if("*" in storageData.run_time.minimum){
         if(elapseTime < storageData.run_time.minimum["*"]){
             storageData.run_time.minimum["*"] = elapseTime;
