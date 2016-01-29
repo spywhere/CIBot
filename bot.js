@@ -35,8 +35,11 @@ function resetSettings(){
 
     presetCommands = [
         {
-            "pattern": /^\s*cd\s*(.+)/mi,
+            "pattern": /^\s*cd\s*(.+)/i,
             "operation": changeWorkingDirectory
+        }, {
+            "pattern": /^\s*cancel\s*(.+)/i,
+            "operation": cancelSequence
         }, {
             "pattern": /reload/i,
             "operation": reloadSequence
@@ -339,7 +342,7 @@ function reloadSequence(matches){
 reloadSequence();
 
 if(!("config" in configData) || !("bot_token" in configData.config) || !("storage_file" in configData.config)){
-    logMessage("Configuration file is incomplete");
+    logMessage("Configuration file is incomplete (\"config\", \"bot_token\" and \"storage_file\" are required)");
     process.exit();
 }
 
@@ -360,6 +363,24 @@ function shutdownSequence(matches){
     saveStorageData(function(){
         process.exit();
     });
+    return {};
+}
+
+function cancelSequence(matches){
+    if(matches.length > 1){
+        var sequenceIds = matches[1].split("\\s+");
+        var index = 0;
+        while(index < sequenceQueue.length){
+            var sequenceInfo = sequenceQueue[index];
+            if(sequenceIds.indexOf(sequenceInfo.sequenceId) >= 0){
+                sequenceInfo.process.kill();
+                sequenceInfo.is_cancel = true;
+                sequenceQueue.splice(index, 1);
+            }else{
+                index++;
+            }
+        }
+    }
     return {};
 }
 
@@ -774,12 +795,16 @@ function runSequence(sequenceInfo, currentCommand, processResult){
         return;
     }
     if(currentCommand > 0){
-        console.log("[" + sequenceId + "] And it's succeed");
+        logMessage("[" + sequenceId + "] And it's succeed");
     }
 
-    var command = sequence.commands[currentCommand];
+    var command = buildSentence([sequence.commands[currentCommand]], getResponseInfo(eventData));
     var commandCallback = (function(sequenceInfo, currentCommand){
         return function(error, stdout, stderr){
+            if("is_cancel" in sequenceInfo && sequenceInfo.is_cancel){
+                logMessage("[" + sequenceInfo.sequenceId + "] Sequence has been cancelled");
+                return;
+            }
             runSequence(sequenceInfo, currentCommand+1, {
                 stdout: stdout,
                 stderr: stderr,
