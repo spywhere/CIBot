@@ -102,7 +102,7 @@ function loadStorageData(){
     }
 }
 
-function saveStorageData(){
+function saveStorageData(callback){
     if(!dataChanged){
         return;
     }
@@ -115,6 +115,9 @@ function saveStorageData(){
         }
         dataChanged = false;
         logMessage("Storage data saved");
+        if(callback){
+            callback();
+        }
     });
 }
 
@@ -354,7 +357,9 @@ bot.startRTM(function(err,bot,payload) {
 loadStorageData();
 
 function shutdownSequence(matches){
-    process.exit();
+    saveStorageData(function(){
+        process.exit();
+    });
     return {};
 }
 
@@ -1137,7 +1142,13 @@ function interceptMessage(bot, message){
 
         return;
     }
-    logMessage("[DEBUG] Store message");
+
+    if(!("unhandle_messages" in storageData)){
+        storageData.unhandle_messages = [];
+    }
+    logMessage("[DEBUG] Unhandle message received");
+    storageData.unhandle_messages.push(message);
+    dataChanged = true;
 }
 
 controller.hears(
@@ -1153,7 +1164,16 @@ controller.hears(
     "direct_message,direct_mention,mention",
     function(bot, message){
         bot.reply(message, "Bye!");
-        process.exit();
+        shutdownSequence();
+    }
+);
+
+controller.hears(
+    ["save"],
+    "direct_message,direct_mention,mention",
+    function(bot, message){
+        bot.reply(message, "Saved");
+        saveStorageData();
     }
 );
 
