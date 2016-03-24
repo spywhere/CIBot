@@ -98,9 +98,15 @@ function loadStorageData(){
             saveInterval = configData.config.save_interval;
         }
         setInterval(saveStorageData, saveInterval);
-        logMessage("Storage data will save on every " + (saveInterval / 1000).toFixed(3) + " seconds");
+        logMessage(
+            "Storage data will save on every " +
+            (saveInterval / 1000).toFixed(3) +
+            " seconds"
+        );
     }catch(exception){
-        logMessage("Error while loading storage file. Will try again in 3 seconds...");
+        logMessage(
+            "Error while loading storage file. Will try again in 3 seconds..."
+        );
         setTimeout(loadStorageData, 3000);
     }
 }
@@ -341,8 +347,15 @@ function reloadSequence(matches){
 
 reloadSequence();
 
-if(!("config" in configData) || !("bot_token" in configData.config) || !("storage_file" in configData.config)){
-    logMessage("Configuration file is incomplete (\"config\", \"bot_token\" and \"storage_file\" are required)");
+if((
+    !("config" in configData) ||
+    !("bot_token" in configData.config) ||
+    !("storage_file" in configData.config)
+)){
+    logMessage(
+        "Configuration file is incomplete " +
+        "(\"config\", \"bot_token\" and \"storage_file\" are required)"
+    );
     process.exit();
 }
 
@@ -406,14 +419,20 @@ function getResponseInfo(eventData){
             var queueSequences = [];
             sequenceQueue.forEach(function(sequenceData){
                 // All queue
-                queueSequences.push(eventData.config.sequence[sequenceData.sequenceId]);
+                queueSequences.push(
+                    eventData.config.sequence[sequenceData.sequenceId]
+                );
 
                 if("is_running" in sequenceData && sequenceData.is_running){
                     // Running sequence
-                    runningSequences.push(eventData.config.sequence[sequenceData.sequenceId]);
+                    runningSequences.push(
+                        eventData.config.sequence[sequenceData.sequenceId]
+                    );
                 }else{
                     // Queuing sequence
-                    queuingSequences.push(eventData.config.sequence[sequenceData.sequenceId]);
+                    queuingSequences.push(
+                        eventData.config.sequence[sequenceData.sequenceId]
+                    );
                 }
             });
 
@@ -754,7 +773,10 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                         success: false,
                         error_type: "output_not_found"
                     });
-                    logMessage("[" + sequenceId + "] Finished in " + elapseTime.format("m:ss.SSS"));
+                    logMessage(
+                        "[" + sequenceId + "] Finished in " +
+                        elapseTime.format("m:ss.SSS")
+                    );
                     collectSequenceElapseTime(elapseTime, sequenceId);
                     runSequence();
                     return;
@@ -790,7 +812,10 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                 });
             }
         }
-        logMessage("[" + sequenceId + "] Finished in " + elapseTime.format("m:ss.SSS"));
+        logMessage(
+            "[" + sequenceId + "] Finished in " +
+            elapseTime.format("m:ss.SSS")
+        );
         collectSequenceElapseTime(elapseTime, sequenceId);
         runSequence();
         return;
@@ -799,11 +824,16 @@ function runSequence(sequenceInfo, currentCommand, processResult){
         logMessage("[" + sequenceId + "] And it's succeed");
     }
 
-    var command = buildSentence([sequence.commands[currentCommand]], getResponseInfo(eventData));
+    var command = buildSentence(
+        [sequence.commands[currentCommand]], getResponseInfo(eventData)
+    );
     var commandCallback = (function(sequenceInfo, currentCommand){
         return function(error, stdout, stderr){
             if("is_cancel" in sequenceInfo && sequenceInfo.is_cancel){
-                logMessage("[" + sequenceInfo.sequenceId + "] Sequence has been cancelled");
+                logMessage(
+                    "[" + sequenceInfo.sequenceId +
+                    "] Sequence has been cancelled"
+                );
                 return;
             }
             runSequence(sequenceInfo, currentCommand+1, {
