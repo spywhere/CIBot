@@ -130,15 +130,6 @@ function saveStorageData(callback){
     });
 }
 
-function parseDateTime(format){
-    if(format.startsWith(":")){
-        format = format.substring(1);
-    }else if(format === ""){
-        format = undefined;
-    }
-    return moment().format(format);
-}
-
 function queryValue(sourceData, data, query, prefix){
     if(query === undefined || query === null || query === ""){
         return data;
@@ -235,10 +226,12 @@ function buildSentence(sentences, dictionary){
         defaultValue, t12, tags
     ){
         var dateTimePoint = macro.indexOf("date_time");
+        var output = null;
         if(dateTimePoint === 1){
-            return parseDateTime(macro.substring(10, macro.length - 1));
+            output = moment().valueOf();
+        }else{
+            output = queryValue(dictionary, dictionary, query);
         }
-        var output = queryValue(dictionary, dictionary, query);
         if(output === null){
             if(defaultValue){
                 output = defaultValue;
@@ -249,14 +242,31 @@ function buildSentence(sentences, dictionary){
         if(typeof(output) === "object"){
             output = JSON.stringify(output);
         }
+        output = "" + output;
         var willLower = true;
         if(tags){
             tags.toLowerCase().split(",").forEach(function(tag){
+                var valuePoint = tag.indexOf("=");
+                var value = undefined;
+                if(valuePoint > 0){
+                    value = tag.substring(valuePoint + 1);
+                    tag = tag.substring(0, valuePoint);
+                }
                 willLower = false;
                 if(tag === "upper"){
                     output = output.toUpperCase();
                 }else if(tag === "lower"){
                     output = output.toLowerCase();
+                }else if(tag === "timestamp_format"){
+                    var numberValue = parseFloat(output);
+                    if(!isNaN(numberValue) && isFinite(numberValue)){
+                        output = moment(numberValue).format(value);
+                    }
+                }else if(tag === "duration_format"){
+                    var numberValue = parseFloat(output);
+                    if(!isNaN(numberValue) && isFinite(numberValue)){
+                        output = moment(numberValue * 1000).format(value);
+                    }
                 }
             });
         }
@@ -269,7 +279,7 @@ function buildSentence(sentences, dictionary){
     var pattern = new RegExp(
         "<((\\w+|\\*|\\^|<([^>](>?[^>])*)>)" +
         "(\\.(\\w+|\\*|\\^|<([^>](>?[^>])*)>))*)" +
-        "((=([^:>]*))|(:((\\w+)(,\\w+)*)))*>",
+        "((=([^:>]*))|(:((\\w+(=[^,>]*)?)(,\\w+(=[^,>]*)?)*)))*>",
         "g"
     );
     return sentence.replace(
@@ -438,7 +448,8 @@ function getResponseInfo(eventData){
         }
 
         // Queue Info
-        // TODO: Sequence Elapse Time
+        info.run_time = storageData.run_time;
+
         if(sequenceQueue.length > 0){
             info.queue = {};
 
@@ -499,7 +510,26 @@ function getResponseInfo(eventData){
                 }
 
                 // Current Sequence Info
-                // TODO: Current Sequence Elapse Time
+                if("startTime" in eventData){
+                    info.sequence_time = {
+                        "start_time": eventData.startTime.valueOf(),
+                        "elapse_time": moment(
+                            moment().diff(eventData.startTime)
+                        ).valueOf()
+                    };
+                }else{
+                    sequenceQueue.forEach(function(sequenceInfo){
+                        if(sequenceInfo.sequenceId === eventData.sequenceId){
+                            info.sequence_time = {
+                                "start_time": sequenceInfo.startTime.valueOf(),
+                                "elapse_time": moment(
+                                    moment().diff(sequenceInfo.startTime)
+                                ).valueOf()
+                            };
+                            return;
+                        }
+                    });
+                }
                 if(eventData.sequenceId in eventData.config.sequence_info){
                     var sequenceId = eventData.sequenceId;
                     info.sequence = eventData.config.sequence_info[
@@ -727,6 +757,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
     sequence = configData.sequence[sequenceId];
 
     if(!currentCommand){
+        eventData.startTime = moment();
         sequenceInfo.startTime = moment();
         workingDirSuffix = "";
         currentCommand = 0;
@@ -938,7 +969,7 @@ function triggerSequence(eventData){
                     if(willAdd){
                         sequenceInfo.notify.push(message);
                     }
-                    return;
+                    return true;
                 }
             });
 
@@ -947,14 +978,14 @@ function triggerSequence(eventData){
             extensions.on_failed.forEach(function(interceptor){
                 var result = interceptor(eventData);
                 if(typeof(result) !== "boolean" || !result){
-                    return;
+                    return false;
                 }
             });
 
             if(response){
                 bot.reply(message, response);
             }
-            return;
+            return "answer_on_parallel" in sequence;
         }
     }
 
@@ -965,6 +996,7 @@ function triggerSequence(eventData){
     };
     sequenceQueue.push(sequenceInfo);
     runSequence();
+    return true;
 }
 
 function interceptMessage(bot, message){
@@ -1191,19 +1223,19 @@ function interceptMessage(bot, message){
             }
         }
 
-        if("answers" in pattern){
+        var requiredAnswer;
+        if(typeof(sequence) === "function"){
+            requiredAnswer = sequence(eventData);
+        }else{
+            requiredAnswer = triggerSequence(eventData);
+        }
+        if("answers" in pattern && requiredAnswer){
             bot.reply(message, buildSentence(
                 pattern["answers"],
                 getResponseInfo(eventData).extends(
                     ("dictionary" in knowledge) ? knowledge["dictionary"] : {}
                 )
             ));
-        }
-
-        if(typeof(sequence) === "function"){
-            sequence(eventData);
-        }else{
-            triggerSequence(eventData);
         }
 
         cont = true;
