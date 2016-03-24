@@ -130,6 +130,15 @@ function saveStorageData(callback){
     });
 }
 
+function parseDateTime(format){
+    if(format.startsWith(":")){
+        format = format.substring(1);
+    }else if(format === ""){
+        format = undefined;
+    }
+    return moment().format(format);
+}
+
 function queryValue(sourceData, data, query, prefix){
     if(query === undefined || query === null || query === ""){
         return data;
@@ -222,8 +231,13 @@ function buildSentence(sentences, dictionary){
     cacheKeys = {};
 
     function dictionaryWord(
-        macro, query, t2, t3 ,t4, t5, t6, defaultValue, t8, tags
+        macro, query, t2, t3 ,t4, t5, t6, t7, t8, t9, t10,
+        defaultValue, t12, tags
     ){
+        var dateTimePoint = macro.indexOf("date_time");
+        if(dateTimePoint === 1){
+            return parseDateTime(macro.substring(10, macro.length - 1));
+        }
         var output = queryValue(dictionary, dictionary, query);
         if(output === null){
             if(defaultValue){
@@ -252,8 +266,14 @@ function buildSentence(sentences, dictionary){
             return output;
         }
     }
+    var pattern = new RegExp(
+        "<((\\w+|\\*|\\^|<([^>](>?[^>])*)>)" +
+        "(\\.(\\w+|\\*|\\^|<([^>](>?[^>])*)>))*)" +
+        "((=([^:>]*))|(:((\\w+)(,\\w+)*)))*>",
+        "g"
+    );
     return sentence.replace(
-        /<((\w+|\*|\^|<[^:>]+>)(\.(\w+|\*|\^|<[^:>]+>))*)((=([^:>]*))|(:((\w+)(,\w+)*)))*>/g,
+        pattern,
         dictionaryWord
     );
 }
@@ -416,8 +436,6 @@ function getResponseInfo(eventData){
         if("knowledgeType" in eventData){
             info.knowledge_type = eventData.knowledgeType;
         }
-
-        // TODO: Date/Time Info
 
         // Queue Info
         // TODO: Sequence Elapse Time
