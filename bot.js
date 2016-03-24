@@ -130,10 +130,11 @@ function saveStorageData(callback){
     });
 }
 
-function queryValue(data, query, prefix){
+function queryValue(sourceData, data, query, prefix){
     if(query === undefined || query === null || query === ""){
         return data;
     }
+    query = buildSentence([query], sourceData);
     var splitPoint = query.indexOf(".");
     var key = query;
 
@@ -171,6 +172,7 @@ function queryValue(data, query, prefix){
                 cacheKeys[prefix] = key;
             }
             return queryValue(
+                sourceData,
                 data[key],
                 query.substring(splitPoint + 1),
                 prefix
@@ -187,6 +189,7 @@ function queryValue(data, query, prefix){
                 key += data.length;
             }
             return queryValue(
+                sourceData,
                 data[key],
                 query.substring(splitPoint + 1),
                 prefix
@@ -203,7 +206,12 @@ function queryValue(data, query, prefix){
                 cacheKeys[prefix] = key;
             }
         }
-        return queryValue(data[key], query.substring(splitPoint + 1), prefix);
+        return queryValue(
+            sourceData,
+            data[key],
+            query.substring(splitPoint + 1),
+            prefix
+        );
     }else{
         return data;
     }
@@ -214,9 +222,9 @@ function buildSentence(sentences, dictionary){
     cacheKeys = {};
 
     function dictionaryWord(
-        macro, query, t2, t3 ,t4, t5, defaultValue, t7, t8, tags
+        macro, query, t2, t3 ,t4, t5, t6, defaultValue, t8, tags
     ){
-        var output = queryValue(dictionary, query);
+        var output = queryValue(dictionary, dictionary, query);
         if(output === null){
             if(defaultValue){
                 output = defaultValue;
@@ -245,7 +253,7 @@ function buildSentence(sentences, dictionary){
         }
     }
     return sentence.replace(
-        /<((\w+|\*|\^)(\.(\w+|\*|\^))*)((=([^:>]*))|(:((\w+)(,\w+)*)))*>/g,
+        /<((\w+|\*|\^|<[^:>]+>)(\.(\w+|\*|\^|<[^:>]+>))*)((=([^:>]*))|(:((\w+)(,\w+)*)))*>/g,
         dictionaryWord
     );
 }
@@ -403,8 +411,10 @@ function getResponseInfo(eventData){
     if(eventData){
         info.message = eventData.message;
 
+        info.config = eventData.config;
+
         if("knowledgeType" in eventData){
-            info.knowledge_type = eventData;
+            info.knowledge_type = eventData.knowledgeType;
         }
 
         // TODO: Date/Time Info
@@ -458,23 +468,23 @@ function getResponseInfo(eventData){
                 preceedingSequence = sequenceData.sequenceId;
             });
 
-            if("config" in eventData && "sequenceInfo" in eventData.config){
+            if("config" in eventData && "sequence_info" in eventData.config){
                 // Parallel Info
                 if(
                     currentInQueue &&
                     preceedingSequence &&
-                    preceedingSequence in event.config.sequenceInfo
+                    preceedingSequence in eventData.config.sequence_info
                 ){
-                    info.parallel_sequence = eventData.config.sequenceInfo[
+                    info.parallel_sequence = eventData.config.sequence_info[
                         preceedingSequence
                     ];
                 }
 
                 // Current Sequence Info
                 // TODO: Current Sequence Elapse Time
-                if(eventData.sequenceId in event.config.sequenceInfo){
+                if(eventData.sequenceId in eventData.config.sequence_info){
                     var sequenceId = eventData.sequenceId;
-                    info.sequence = eventData.config.sequenceInfo[
+                    info.sequence = eventData.config.sequence_info[
                         sequenceId
                     ];
                 }
