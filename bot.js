@@ -809,15 +809,13 @@ function runSequence(sequenceInfo, currentCommand, processResult){
                         json: true
                     });
                 }else{
-                    result = {
-                        output: processResult.stdout
-                    };
+                    result.output = processResult.stdout;
                 }
             }else if(typeof(sequence.output) === "string"){
                 var output_file = path.join(workingDir, sequence.output);
                 try{
                     fs.accessSync(output_file);
-                    result = yaml.safeLoad(
+                    result.output = yaml.safeLoad(
                         fs.readFileSync(output_file, "utf8"),
                         {
                             json: true
@@ -1084,13 +1082,10 @@ function interceptMessage(bot, message){
                             "value" in mapping && "map" in mapping &&
                             mapping.value === captures[captureName]
                         ){
-                            sequenceId = mapping.map;
+                            captures[captureName] = mapping.map;
                             return;
                         }
                     });
-                    if(sequenceId){
-                        break;
-                    }
                 }
             }
         }
