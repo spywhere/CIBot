@@ -9,6 +9,8 @@ var decache = require("decache");
 var fs = require("fs");
 var moment = require("moment");
 var yaml = require("js-yaml");
+var powerOff = require("power-off");
+var sleepMode = require("sleep-mode");
 
 var cacheKeys;
 var dataChanged = false;
@@ -45,7 +47,16 @@ function resetSettings(){
             "operation": reloadSequence
         }, {
             "pattern": /shutdown/i,
-            "operation": reloadSequence
+            "operation": shutdownSequence
+        }, {
+            "pattern": /save/i,
+            "operation": saveStorageData
+        }, {
+            "pattern": /shutdown_computer/i,
+            "operation": shutdownComputer
+        }, {
+            "pattern": /sleep_computer/i,
+            "operation": sleepComputer
         }
     ];
 }
@@ -409,6 +420,20 @@ bot.startRTM(function(err,bot,payload) {
 });
 
 loadStorageData();
+
+function shutdownComputer(matches){
+    saveStorageData(function(){
+        powerOff();
+    });
+    return {};
+}
+
+function sleepComputer(matches){
+    saveStorageData(function(){
+        sleepMode();
+    });
+    return {};
+}
 
 function shutdownSequence(matches){
     saveStorageData(function(){
@@ -1261,32 +1286,6 @@ function interceptMessage(bot, message){
     storageData.unhandle_messages.push(message);
     dataChanged = true;
 }
-
-controller.hears(
-    ["reload"],
-    "direct_message,direct_mention,mention",
-    function(bot, message){
-        reloadSequence();
-    }
-);
-
-controller.hears(
-    ["shutdown"],
-    "direct_message,direct_mention,mention",
-    function(bot, message){
-        bot.reply(message, "Bye!");
-        shutdownSequence();
-    }
-);
-
-controller.hears(
-    ["save"],
-    "direct_message,direct_mention,mention",
-    function(bot, message){
-        bot.reply(message, "Saved");
-        saveStorageData();
-    }
-);
 
 controller.hears(
     ["."],

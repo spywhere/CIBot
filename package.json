@@ -4,6 +4,8 @@
   "description": "A Slack bot to trigger the iOS deployment process",
   "main": "bot.js",
   "dependencies": {
+    "power-off": "^1.0.0",
+    "sleep-mode": "^1.1.0",
     "botkit": "^0.0.5",
     "decache": "^3.0.3",
     "js-yaml": "^3.5.2",
