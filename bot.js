@@ -37,25 +37,25 @@ function resetSettings(){
 
     presetCommands = [
         {
-            "pattern": /^\s*cd\s*(.+)/i,
+            "pattern": /^\s*cd\s+(.+)/i,
             "operation": changeWorkingDirectory
         }, {
             "pattern": /^\s*cancel\s*(.+)/i,
             "operation": cancelSequence
         }, {
-            "pattern": /reload/i,
+            "pattern": /^\s*reload\s*(.+)?/i,
             "operation": reloadSequence
         }, {
-            "pattern": /shutdown/i,
+            "pattern": /^\s*shutdown/i,
             "operation": shutdownSequence
         }, {
-            "pattern": /save/i,
+            "pattern": /^\s*save_data/i,
             "operation": saveStorageData
         }, {
-            "pattern": /shutdown_computer/i,
+            "pattern": /^\s*shutdown_computer/i,
             "operation": shutdownComputer
         }, {
-            "pattern": /sleep_computer/i,
+            "pattern": /^\s*sleep_computer/i,
             "operation": sleepComputer
         }
     ];
@@ -289,7 +289,7 @@ function buildSentence(sentences, dictionary){
     }
     var pattern = new RegExp(
         "<((\\w+|\\*|\\^|<([^>](>?[^>])*)>)" +
-        "(\\.(\\w+|\\*|\\^|<([^>](>?[^>])*)>))*)" +
+        "(\\.(\\w+|\\*|\\^|<([^>](>?[^>])*?)>))*)" +
         "((=([^:>]*))|(:((\\w+(=[^,>]*)?)(,\\w+(=[^,>]*)?)*)))*>",
         "g"
     );
@@ -322,6 +322,7 @@ function reloadSequence(matches){
         });
         // Load extensions
         if(
+            matches.indexOf("--extension") != -1 &&
             "config" in configData &&
             "extensions" in configData.config
         ){
@@ -394,7 +395,7 @@ function reloadSequence(matches){
     return {};
 }
 
-reloadSequence();
+reloadSequence(["--extension"]);
 
 if((
     !("config" in configData) ||
@@ -1128,8 +1129,12 @@ function interceptMessage(bot, message){
                     message, buildSentence(
                         knowledge.responses,
                         getResponseInfo({
+                            bot: bot,
+                            message: message,
                             knowledgeType: knowledgeType,
                             captures: captures,
+                            // Helper data
+                            config: configData,
                         }).extends(
                             (
                                 "dictionary" in knowledge
