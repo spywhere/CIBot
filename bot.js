@@ -17,6 +17,7 @@ var Botkit = require("botkit");
 var exec = require("child_process").exec;
 var path = require("path");
 
+var bot = null;
 var firstLaunch = true;
 var running = false;
 var cacheKeys;
@@ -1285,7 +1286,7 @@ function startBot(){
     }
 
     var controller = Botkit.slackbot();
-    var bot = controller.spawn({
+    bot = controller.spawn({
         token: configData.config.bot_token
     });
 
