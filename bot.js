@@ -11,7 +11,14 @@ var moment = require("moment");
 var yaml = require("js-yaml");
 var powerOff = require("power-off");
 var sleepMode = require("sleep-mode");
+var isOnline = require("is-online");
 
+var Botkit = require("botkit");
+var exec = require("child_process").exec;
+var path = require("path");
+
+var firstLaunch = true;
+var running = false;
 var cacheKeys;
 var dataChanged = false;
 var storageData = {};
@@ -299,10 +306,6 @@ function buildSentence(sentences, dictionary){
     );
 }
 
-var Botkit = require("botkit");
-var exec = require("child_process").exec;
-var path = require("path");
-
 function changeWorkingDirectory(matches){
     if(matches.length > 1){
         workingDirSuffix = path.resolve(workingDirSuffix, matches[1]);
@@ -394,33 +397,6 @@ function reloadSequence(matches){
     extensionsLoaded = true;
     return {};
 }
-
-reloadSequence(["--extension"]);
-
-if((
-    !("config" in configData) ||
-    !("bot_token" in configData.config) ||
-    !("storage_file" in configData.config)
-)){
-    logMessage(
-        "Configuration file is incomplete " +
-        "(\"config\", \"bot_token\" and \"storage_file\" are required)"
-    );
-    process.exit();
-}
-
-var controller = Botkit.slackbot();
-var bot = controller.spawn({
-    token: configData.config.bot_token
-});
-
-bot.startRTM(function(err,bot,payload) {
-    if (err) {
-        throw new Error("Could not connect to Slack");
-    }
-});
-
-loadStorageData();
 
 function shutdownComputer(matches){
     saveStorageData(function(){
@@ -1292,8 +1268,61 @@ function interceptMessage(bot, message){
     dataChanged = true;
 }
 
-controller.hears(
-    ["."],
-    "direct_message,direct_mention,mention",
-    interceptMessage
-);
+function startBot(){
+    reloadSequence((firstLaunch) ? ["--extension"] : []);
+    firstLaunch = false;
+
+    if((
+        !("config" in configData) ||
+        !("bot_token" in configData.config) ||
+        !("storage_file" in configData.config)
+    )){
+        logMessage(
+            "Configuration file is incomplete " +
+            "(\"config\", \"bot_token\" and \"storage_file\" are required)"
+        );
+        process.exit();
+    }
+
+    var controller = Botkit.slackbot();
+    var bot = controller.spawn({
+        token: configData.config.bot_token
+    });
+
+    bot.startRTM(function(err,bot,payload) {
+        if (err) {
+            throw new Error("Could not connect to Slack");
+        }
+    });
+
+    loadStorageData();
+    
+    controller.hears(
+        ["."],
+        "direct_message,direct_mention,mention",
+        interceptMessage
+    );
+}
+
+function networkPing(){
+    isOnline(function(err, online){
+        if(online){
+            if(!running){
+                running = true;
+                if(!firstLaunch){
+                    logMessage("Restarting bot...");
+                }
+                startBot();
+            }
+        }else{
+            running = false;
+            logMessage(
+                "Looks like the network connection is lost. " +
+                "Going to restart the bot on the next try."
+            );
+        }
+    });
+}
+
+setInterval(networkPing, 5000);
+networkPing();
