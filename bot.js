@@ -1324,5 +1324,5 @@ function networkPing(){
     });
 }
 
-setInterval(networkPing, 5000);
+setInterval(networkPing, 300000);
 networkPing();
