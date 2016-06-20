@@ -241,8 +241,8 @@ function buildSentence(sentences, dictionary){
     cacheKeys = {};
 
     function dictionaryWord(
-        macro, query, t2, t3 ,t4, t5, t6, t7, t8, t9, t10,
-        defaultValue, t12, tags
+        macro, query, t2, t3 ,t4, t5, t6, t7, t8, t9,
+        defaultValue, t11, tags
     ){
         var dateTimePoint = macro.indexOf("date_time");
         var output = null;
@@ -297,8 +297,8 @@ function buildSentence(sentences, dictionary){
     }
     var pattern = new RegExp(
         "<((\\w+|\\*|\\^|<([^>](>?[^>])*)>)" +
-        "(\\.(\\w+|\\*|\\^|<([^>](>?[^>])*?)>))*)" +
-        "((=([^:>]*))|(:((\\w+(=[^,>]*)?)(,\\w+(=[^,>]*)?)*)))*>",
+        "(\\.(\\w+|\\*|\\^|<([^>](>?[^>])*?)>))*)(=([^:>]*))?" +
+        "(:(([^,>]+)(,[^,>]+)*))?>",
         "g"
     );
     return sentence.replace(
@@ -462,18 +462,18 @@ function getResponseInfo(eventData){
             sequenceQueue.forEach(function(sequenceData){
                 // All queue
                 queueSequences.push(
-                    eventData.config.sequence[sequenceData.sequenceId]
+                    sequenceData.sequenceId
                 );
 
                 if("is_running" in sequenceData && sequenceData.is_running){
                     // Running sequence
                     runningSequences.push(
-                        eventData.config.sequence[sequenceData.sequenceId]
+                        sequenceData.sequenceId
                     );
                 }else{
                     // Queuing sequence
                     queuingSequences.push(
-                        eventData.config.sequence[sequenceData.sequenceId]
+                        sequenceData.sequenceId
                     );
                 }
             });
