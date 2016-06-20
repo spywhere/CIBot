@@ -1285,10 +1285,16 @@ function startBot(){
         process.exit();
     }
 
-    var controller = Botkit.slackbot();
-    bot = controller.spawn({
-        token: configData.config.bot_token
-    });
+    var newlyCreated = false;
+    if(bot){
+        bot.closeRTM();
+    }else{
+        var controller = Botkit.slackbot();
+        bot = controller.spawn({
+            token: configData.config.bot_token
+        });
+        newlyCreated = true;
+    }
 
     bot.startRTM(function(err,bot,payload) {
         if (err) {
@@ -1298,11 +1304,13 @@ function startBot(){
 
     loadStorageData();
     
-    controller.hears(
-        ["."],
-        "direct_message,direct_mention,mention",
-        interceptMessage
-    );
+    if(newlyCreated){
+        controller.hears(
+            ["."],
+            "direct_message,direct_mention,mention",
+            interceptMessage
+        );
+    }
 }
 
 function networkPing(){
