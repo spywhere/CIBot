@@ -5,7 +5,6 @@
 * @Last Modified time: 2016-01-25 17:10:20
 */
 
-var decache = require("decache");
 var fs = require("fs");
 var moment = require("moment");
 var yaml = require("js-yaml");
@@ -26,7 +25,8 @@ var storageData = {};
 var configData;
 var sequenceQueue = [];
 var extensions;
-var extensionsLoaded = false;
+var extensionsLoaded = {
+};
 
 var workingDirSuffix = "";
 
@@ -326,17 +326,22 @@ function reloadSequence(matches){
         });
         // Load extensions
         if(
-            matches.indexOf("--extension") != -1 &&
+            matches.indexOf("--no-extensions") === -1 &&
             "config" in configData &&
             "extensions" in configData.config
         ){
             configData.config.extensions.forEach(
                 function(extensionPath){
                     logMessage("Loading extension " + extensionPath + "...");
-                    if(extensionsLoaded){
-                        decache(extensionPath);
+                    if(
+                        extensionPath in extensionsLoaded &&
+                        extensionsLoaded[extensionPath]
+                    ){
+                        delete require.cache[require.resolve(extensionPath)]
+                        extensionsLoaded[extensionPath] = false;
                     }
                     var extension = require(extensionPath);
+                    extensionsLoaded[extensionPath] = true;
 
                     if("preEvent" in extension){
                         extensions.pre_event.push(extension.preEvent);
@@ -387,16 +392,17 @@ function reloadSequence(matches){
             );
         }
     }catch(err){
-        extensionsLoaded = false;
         logMessage("Error while loading: " + err);
         return {
             stdout: "",
             stderr: "",
-            error: "Error while loading: " + err
+            error: "Error while loading: " + err,
+            internal: "terminate"
         };
     }
-    extensionsLoaded = true;
-    return {};
+    return {
+        internal: "terminate"
+    };
 }
 
 function shutdownComputer(matches){
@@ -719,7 +725,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
         logMessage("[DEBUG] End queue");
         return;
     }
-    var sequence = null;
+    var sequence = {};
     if(!sequenceInfo){
         var taskIndex = null;
         for(var index in sequenceQueue){
@@ -757,7 +763,9 @@ function runSequence(sequenceInfo, currentCommand, processResult){
 
     var eventData = sequenceInfo.eventData;
     var sequenceId = eventData.sequenceId;
-    sequence = configData.sequence[sequenceId];
+    if(sequenceId){
+        sequence = configData.sequence[sequenceId];
+    }
 
     if(!currentCommand){
         eventData.startTime = moment();
@@ -888,7 +896,7 @@ function runSequence(sequenceInfo, currentCommand, processResult){
         [sequence.commands[currentCommand]], getResponseInfo(eventData)
     );
     var commandCallback = (function(sequenceInfo, currentCommand){
-        return function(error, stdout, stderr){
+        return function(error, stdout, stderr, internal){
             if("is_cancel" in sequenceInfo && sequenceInfo.is_cancel){
                 logMessage(
                     "[" + sequenceInfo.sequenceId +
@@ -899,7 +907,8 @@ function runSequence(sequenceInfo, currentCommand, processResult){
             runSequence(sequenceInfo, currentCommand+1, {
                 stdout: stdout,
                 stderr: stderr,
-                error: error
+                error: error,
+                internal: internal
             });
         };
     })(sequenceInfo, currentCommand);
@@ -921,7 +930,8 @@ function runSequence(sequenceInfo, currentCommand, processResult){
         commandCallback(
             ("error" in commandResult) ? commandResult.error : null,
             ("stdout" in commandResult) ? commandResult.stdout : null,
-            ("stderr" in commandResult) ? commandResult.stderr : null
+            ("stderr" in commandResult) ? commandResult.stderr : null,
+            ("internal" in commandResult) ? commandResult.internal : null
         );
     }else{
         sequenceInfo.process = exec(command, {
@@ -1270,7 +1280,7 @@ function interceptMessage(bot, message){
 }
 
 function startBot(){
-    reloadSequence((firstLaunch) ? ["--extension"] : []);
+    reloadSequence([]);
     firstLaunch = false;
 
     if((

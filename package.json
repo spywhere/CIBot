@@ -5,7 +5,6 @@
   "main": "bot.js",
   "dependencies": {
     "botkit": "^0.0.5",
-    "decache": "^3.0.3",
     "is-online": "^5.1.1",
     "js-yaml": "^3.5.2",
     "moment": "^2.11.1",
