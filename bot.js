@@ -5,6 +5,7 @@
 * @Last Modified time: 2016-01-25 17:10:20
 */
 
+var decache = require("decache");
 var fs = require("fs");
 var moment = require("moment");
 var yaml = require("js-yaml");
